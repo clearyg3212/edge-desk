@@ -130,6 +130,18 @@ def test_ace_tax_takes_cheap_yes():
     assert yes.observed_at
 
 
+def test_ace_tax_takes_at_plus_ev_ask():
+    yes = [x for x in evaluate_slate([_game()], [_rfi(40)]) if x.side == "YES"][0]
+    assert yes.accepted, yes
+    assert yes.reason_tag == "ace_tax"
+
+
+def test_ace_tax_sits_when_kalshi_is_fair():
+    yes = [x for x in evaluate_slate([_game()], [_rfi(50)]) if x.side == "YES"][0]
+    assert not yes.accepted
+    assert yes.reason in {"no_structural_edge", "disagreement_too_small", "edge_too_small"}
+
+
 def test_ace_tax_uses_mlb_prior_not_magic_41():
     from .priors import yrfi_p
     p = yrfi_p("two_ace")

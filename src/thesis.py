@@ -43,12 +43,14 @@ def thesis(
     if market.kind == "RFI":
         if _thin(game):
             return {"p": 0.5, "tag": "thin_sample", "source": "f1-poisson", "reject": "thin_sample"}
-        if _both_aces(game) and side == "YES" and ask <= 36:
+        if _both_aces(game) and side == "YES":
             p = yrfi_p("two_ace")
-            return {"p": p, "tag": "ace_tax", "source": "mlb-prior+ace-gate", "reject": None}
-        if _both_soft(game) and side == "YES" and ask <= 48:
+            if p * 100 - ask >= CFG.min_disagreement_cents:
+                return {"p": p, "tag": "ace_tax", "source": "mlb-prior+ace-gate", "reject": None}
+        if _both_soft(game) and side == "YES":
             p = yrfi_p("two_soft")
-            return {"p": p, "tag": "soft_arm", "source": "mlb-prior+soft-gate", "reject": None}
+            if p * 100 - ask >= CFG.min_disagreement_cents:
+                return {"p": p, "tag": "soft_arm", "source": "mlb-prior+soft-gate", "reject": None}
 
     if mins > CFG.max_hours_to_pitch * 60:
         return {"p": 0.5, "tag": "too_early", "source": "f1-poisson", "reject": "too_early"}
