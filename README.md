@@ -22,3 +22,12 @@ Reads public MLB + public Kalshi. Papers a ticket only if a named thesis still h
 - `data/tickets.jsonl` — paper blotter (settles when games go final)
 
 No API key. No pip install.
+
+## Review in ChatGPT or Codex
+
+This repo is **public**. Paste into ChatGPT / Codex:
+
+> Review https://github.com/clearyg3212/edge-desk — read AGENTS.md first. Paper-only. Do not add live Kalshi orders.
+
+Full prompt: [REVIEW.md](REVIEW.md). Codex: open the repo and follow `AGENTS.md`.
+
