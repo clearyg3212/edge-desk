@@ -33,7 +33,7 @@ def thesis(
 ) -> dict:
     mins = minutes_to_pitch(game)
 
-    if market.kind == "TOTAL" and market.line is not None and ladder and ladder["points"] >= 2:
+    if market.kind == "TOTAL" and market.line is not None and ladder and ladder["points"] >= CFG.ladder_min_points:
         p_over = survival(market.line, ladder["lambda"])
         p = p_over if side == "YES" else 1 - p_over
         near = abs(market.line - (ladder["lambda"] - 0.5)) <= 1.6

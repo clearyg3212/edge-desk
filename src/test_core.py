@@ -336,6 +336,33 @@ def test_updated_time_iso_does_not_crash():
     assert _parse_updated({"updated_ts": object()}) is None
 
 
+def test_ladder_ignores_two_points():
+    from .thesis import thesis
+    from .model import project_game
+    g = _game()
+    m = _rfi(40)
+    m.kind = "TOTAL"
+    m.line = 8.5
+    th = thesis(g, m, "YES", 40, project_game(g), {"lambda": 8.5, "points": 2})
+    assert th["reject"] == "no_structural_edge"
+
+
+def test_confirm_paper_kills_fill_if_refetch_dies():
+    from . import scan as scan_mod
+    yes = [x for x in evaluate_slate([_game()], [_rfi(32)]) if x.side == "YES"][0]
+    assert yes.accepted
+    object.__setattr__(CFG, "exec_latency_sec", 0.0)
+    old = scan_mod.fetch_ticker
+    scan_mod.fetch_ticker = lambda ticker: None
+    try:
+        out = scan_mod.confirm_paper(yes, _game())
+        assert not out.accepted
+        assert out.reason == "stale_quote"
+    finally:
+        scan_mod.fetch_ticker = old
+        object.__setattr__(CFG, "exec_latency_sec", 1.0)
+
+
 def run() -> None:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0
