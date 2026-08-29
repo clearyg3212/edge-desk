@@ -2,20 +2,46 @@
 
 Repo (public): https://github.com/clearyg3212/edge-desk
 
+Current HEAD should include `src/calibrate.py`, `src/priors_default.json`, `src/lock.py`, `src/quotes.py`.
+
 ```
 Review https://github.com/clearyg3212/edge-desk
 
-This is a paper-only Kalshi MLB bot. It must never place live orders.
+Paper-only Kalshi MLB bot. Must never place a live order.
 
-Read AGENTS.md first, then src/engine.py, src/fees.py, src/thesis.py, src/test_core.py.
+Read AGENTS.md first. Then src/scan.py, src/engine.py, src/thesis.py,
+src/fees.py, src/priors.py, src/calibrate.py, src/ledger.py, src/lock.py,
+src/quotes.py, src/test_core.py.
 
-Look for:
-1. Fee model errors (quadratic 7% fee, ceil on the TOTAL not per-contract)
-2. Using 100-bid when ask is missing
-3. Generic Poisson spray instead of named theses
-4. Gates that can never fire, or that fire on fair prices
-5. Matching bugs on Kalshi tickers / MLB team codes
-6. Any path that could send an HTTP write to Kalshi
+Prior audits already fixed:
+- fees omitted from realized P&L
+- zero/missing YES depth treated as executable
+- daily/game caps resetting each process
+- NO/under depth (must use yes_bid_size_fp)
+- dead Kalshi feed looking like a quiet night
+- 16h window bypassed by ace_tax
+- game cap dying at UTC midnight
+- circular ladder fitting the evaluated strike
+- hardcoded 41% ace_tax prior
 
-Do not add live trading. Propose patches as a PR-style diff. Keep tests in src/test_core.py green.
+Look for remaining bugs, especially:
+1. Fee model (quadratic 7%, ceil on the TOTAL)
+2. Missing ask inferred as 100-bid on the YES side
+3. NO/under still thin_book on a realistic Kalshi payload
+   (yes_ask_size_fp + yes_bid_size_fp, no no_ask_size_fp)
+4. kalshi_ok=True on a failed or partial series fetch
+5. Time window not applied to every thesis
+6. Matching (home/away reversal, doubleheaders)
+7. confirm_paper / refetch skipped or using the stale ask
+8. File lock not covering load→evaluate→settle→fill→save
+9. Generic Poisson spray instead of named theses
+10. Any HTTP write to Kalshi
+
+Claims you should NOT let slide:
+- Fitted two_ace YRFI ≈ 48.8% (n=414) is a BASEBALL rate.
+  It is not evidence Kalshi misprices that rate.
+- Paper P&L is simulated. Ready for live trading: no.
+
+Do not add live trading. Propose a PR-style diff. Keep
+`python -m src.test_core` green.
 ```
