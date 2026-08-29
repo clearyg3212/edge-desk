@@ -96,3 +96,4 @@ class Decision:
     fee_total: float = 0.0
     quoted_at: Optional[str] = None
     observed_at: Optional[str] = None
+    ask_size: Optional[float] = None

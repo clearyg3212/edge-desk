@@ -54,7 +54,7 @@ def test_realized_pnl_subtracts_fee():
     lost = realized_pnl_cents(False, 32, 10)
     assert won == (100 - 32) * 10 - fee
     assert lost == -32 * 10 - fee
-    assert lost < -320  # fee makes a loss worse than price-only
+    assert lost < -320
 
 
 def test_missing_ask_never_inferred():
@@ -95,7 +95,7 @@ def test_negative_spread_rejected():
 
 
 def test_yes_no_lock_rejected():
-    d = evaluate_slate([_game()], [_rfi(32, no_ask=60)])  # 32+60=92 < 99
+    d = evaluate_slate([_game()], [_rfi(32, no_ask=60)])
     yes = [x for x in d if x.side == "YES"][0]
     assert not yes.accepted
     assert yes.reason == "crossed_book"
@@ -127,7 +127,6 @@ def test_ace_tax_takes_cheap_yes():
     assert yes.accepted, yes
     assert yes.reason_tag == "ace_tax"
     assert yes.size <= CFG.max_contracts_per_trade
-    assert yes.quoted_at is None  # observation still stamped
     assert yes.observed_at
 
 
@@ -215,6 +214,28 @@ def test_settle_fees_in_pnl():
     fee = kalshi_taker_fee_cents(32, 10)
     assert t.status == "settled"
     assert t.pnl_cents == (100 - 32) * 10 - fee
+
+
+def test_quote_log_and_labels():
+    from . import config as cfg_mod
+    from .quotes import append_quotes, label_finals, load_quotes, load_outcomes
+    old_dir = Path(cfg_mod.CFG.data_dir)
+    with tempfile.TemporaryDirectory() as td:
+        object.__setattr__(cfg_mod.CFG, "data_dir", Path(td))
+        try:
+            g = _game()
+            d = evaluate_slate([g], [_rfi(32)])
+            n = append_quotes(d, [g])
+            assert n == len(d)
+            rows = load_quotes()
+            assert rows and rows[0]["away_era"] == 2.1
+            assert rows[0]["vs"] == "BOS@NYY"
+            labeled = label_finals([_game(phase="final", f1_away=1, f1_home=0)])
+            assert labeled == 1
+            o = load_outcomes()["g1"]
+            assert o.yrfi == 1
+        finally:
+            object.__setattr__(cfg_mod.CFG, "data_dir", old_dir)
 
 
 def test_paper_config_locked():

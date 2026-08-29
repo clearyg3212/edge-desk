@@ -25,6 +25,7 @@ Windows: `run.bat`. Tests must stay green (22+).
 7. `src/scan.py` — public MLB + public Kalshi. Match window 6h. Quote timestamps stored.
 8. `src/ledger.py` — paper tickets; settle uses fee-adjusted P&L; **atomic jsonl replace**.
 9. `src/test_core.py` — adversarial checks. Add a test if you change a gate.
+10. `src/quotes.py` + `src/report.py` — paper **training log**. Every quote, then labels at final. Do not train a net on tickets alone.
 
 ## Economic invariants (do not “simplify”)
 

@@ -38,7 +38,7 @@ def _base(**kw) -> Decision:
         ticker="", game_id="", kind="", side="", line=None, ask_cents=0.0, spread_cents=99.0,
         model_prob=0.5, raw_ev=-999.0, fee=0.0, net_ev=-999.0, roi=-999.0, size=0,
         accepted=False, reason="missing_price", reason_tag="none", source="f1-poisson",
-        fee_total=0.0, quoted_at=None, observed_at=None,
+        fee_total=0.0, quoted_at=None, observed_at=None, ask_size=None,
     )
     defaults.update(kw)
     return Decision(**defaults)
@@ -63,6 +63,7 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
         ticker=market.ticker, game_id=game.game_id, kind=market.kind, side=side,
         line=market.line, ask_cents=ask or 0.0, spread_cents=spread,
         quoted_at=market.quoted_at, observed_at=market.observed_at or observed,
+        ask_size=ask_size,
     )
     gate = eligibility(game, market, side)
     if gate:

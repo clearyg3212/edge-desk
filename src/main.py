@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections import Counter
 
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from .config import CFG
 from .eligibility import REASON_LABEL
 from .engine import evaluate_slate
 from .ledger import load_tickets, paper_fill, save_tickets, settle
+from .quotes import append_quotes, label_finals
 from .scan import run_scan
 from .types import Decision, KalshiSnap, MlbGame, Pitcher, Weather
 
@@ -106,19 +108,7 @@ def _log_decisions(decisions: list[Decision]) -> None:
             f.write(json.dumps(d.__dict__) + "\n")
 
 
-def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="EDGE DESK paper bot — never places Kalshi orders")
-    p.add_argument("--once", action="store_true", help="one scan (default)")
-    p.add_argument("--synthetic-only", action="store_true")
-    p.add_argument("--no-paper", action="store_true", help="scan but do not write tickets")
-    args = p.parse_args(argv)
-
-    print("EDGE DESK  ·  paper only  ·  no live orders")
-    CFG.assert_paper_safe()
-    _synthetic_paths()
-    if args.synthetic_only:
-        return 0
-
+def _one_scan(no_paper: bool) -> int:
     print("\nscanning MLB + Kalshi …")
     tickets = load_tickets()
     scan = run_scan(existing_tickets=tickets)
@@ -127,9 +117,11 @@ def main(argv: list[str] | None = None) -> int:
     decisions, games = scan["decisions"], scan["games"]
     _print_board(decisions, games)
     _log_decisions(decisions)
+    nq = append_quotes(decisions, games)
+    nl = label_finals(games)
 
     settle(tickets, games)
-    if not args.no_paper:
+    if not no_paper:
         by = {g.game_id: g for g in games}
         filled = 0
         for d in decisions:
@@ -142,9 +134,37 @@ def main(argv: list[str] | None = None) -> int:
     pnl = sum(t.pnl_cents or 0 for t in settled)
     print(f"blotter  open={sum(1 for t in tickets if t.status=='open')}  "
           f"settled={len(settled)}  P&L={pnl/100:.2f} USD")
-    print(f"logs → {CFG.log_dir / 'decisions.jsonl'}")
-    print(f"book → {CFG.data_dir / 'tickets.jsonl'}")
+    print(f"quotes +{nq}  labels +{nl}")
+    print(f"log    → {CFG.data_dir / 'quotes.jsonl'}")
+    print(f"labels → {CFG.data_dir / 'outcomes.jsonl'}")
+    print(f"book   → {CFG.data_dir / 'tickets.jsonl'}")
+    print("report → python -m src.report")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="EDGE DESK paper bot — never places Kalshi orders")
+    p.add_argument("--once", action="store_true", help="one scan (default)")
+    p.add_argument("--loop", type=int, metavar="MIN", default=0,
+                   help="rescan every MIN minutes (paper log). Ctrl+C to stop.")
+    p.add_argument("--synthetic-only", action="store_true")
+    p.add_argument("--no-paper", action="store_true", help="scan but do not write tickets")
+    args = p.parse_args(argv)
+
+    print("EDGE DESK  ·  paper only  ·  no live orders")
+    CFG.assert_paper_safe()
+    _synthetic_paths()
+    if args.synthetic_only:
+        return 0
+
+    if args.loop and args.loop > 0:
+        mins = max(10, args.loop)
+        print(f"logging every {mins} min. leave this window open.")
+        while True:
+            _one_scan(args.no_paper)
+            print(f"\nsleeping {mins} min …")
+            time.sleep(mins * 60)
+    return _one_scan(args.no_paper)
 
 
 if __name__ == "__main__":
