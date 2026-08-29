@@ -104,7 +104,7 @@ def append_quotes(decisions: Iterable[Decision], games: Iterable[MlbGame]) -> in
                 reason=d.reason,
                 accepted=d.accepted,
                 event="candidate_observed",
-                candidate_id=d.candidate_id or f"{d.ticker}:{d.side}:{d.game_id}:{ts}",
+                candidate_id=d.candidate_id,
                 orig_ask=d.ask_cents,
             )
             f.write(json.dumps(asdict(row)) + "\n")

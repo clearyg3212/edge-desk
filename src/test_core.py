@@ -476,6 +476,38 @@ def test_candidate_ids_are_unique_and_present():
     assert ids and len(ids) == len(set(ids))
 
 
+def test_amended_does_not_settle():
+    t = Ticket(
+        id="a", opened_at="2026-08-29T00:00:00+00:00", ticker="T", game_id="g1",
+        label="x", kind="RFI", side="YES", line=0.5, ask_cents=32, model_prob=0.41,
+        net_ev=8, size=10, reason_tag="ace_tax", fee_cents=2,
+    )
+    settle([t], [_game()], {"T": {"status": "amended", "result": "yes"}})
+    assert t.status == "open"
+
+
+def test_quote_and_execution_share_id():
+    from .quotes import append_quotes, append_execution, load_quotes
+    from . import config as cfg_mod
+    old_dir = Path(cfg_mod.CFG.data_dir)
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        object.__setattr__(cfg_mod.CFG, "data_dir", Path(td))
+        try:
+            g = _game()
+            ds = evaluate_slate([g], [_rfi(32)])
+            yes = [x for x in ds if x.side == "YES"][0]
+            assert yes.candidate_id
+            append_quotes(ds, [g])
+            append_execution(yes, yes, g, True)
+            rows = load_quotes()
+            obs = [r for r in rows if r.get("event") == "candidate_observed" and r.get("side") == "YES"][0]
+            exe = [r for r in rows if r.get("event") == "execution_attempt"][0]
+            assert obs["candidate_id"] == exe["candidate_id"] == yes.candidate_id
+        finally:
+            object.__setattr__(cfg_mod.CFG, "data_dir", old_dir)
+
+
 def test_ny_tz_import_does_not_crash():
     from .config import ET, now_et
     now_et()

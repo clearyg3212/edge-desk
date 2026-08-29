@@ -40,7 +40,7 @@ def _base(**kw) -> Decision:
         ticker="", game_id="", kind="", side="", line=None, ask_cents=0.0, spread_cents=99.0,
         model_prob=0.5, raw_ev=-999.0, fee=0.0, net_ev=-999.0, roi=-999.0, size=0,
         accepted=False, reason="missing_price", reason_tag="none", source="f1-poisson",
-        fee_total=0.0, quoted_at=None, observed_at=None, ask_size=None, candidate_id="",
+        fee_total=0.0, quoted_at=None, observed_at=None, ask_size=None, candidate_id=uuid4().hex,
     )
     defaults.update(kw)
     return Decision(**defaults)
