@@ -116,30 +116,28 @@ def paper_fill(d: Decision, game: MlbGame, tickets: List[Ticket]) -> Optional[Ti
     return t
 
 
-def settle(tickets: List[Ticket], games: List[MlbGame]) -> None:
-    by = {g.game_id: g for g in games}
+TERMINAL_STATUS = frozenset({"finalized", "determined", "settled"})
+
+
+def settle(tickets: List[Ticket], games: List[MlbGame], market_results: Optional[dict] = None) -> None:
+    """Settle only from Kalshi's official result. MLB scores do not close tickets."""
     for t in tickets:
         if t.status != "open":
             continue
-        g = by.get(t.game_id)
-        if not g:
+        mr = (market_results or {}).get(t.ticker) or {}
+        st = str(mr.get("status") or "").lower()
+        res = str(mr.get("result") or "").lower()
+        if st not in TERMINAL_STATUS or res not in {"yes", "no"}:
             continue
-        if g.phase == "void":
-            t.status, t.pnl_cents = "void", 0
-            continue
-        if g.phase != "final":
-            continue
-        yes_won = None
-        if t.kind == "RFI" and g.f1_away is not None and g.f1_home is not None:
-            yes_won = (g.f1_away + g.f1_home) > 0
-        elif t.kind == "TOTAL" and g.total_runs is not None and t.line is not None:
-            yes_won = g.total_runs > t.line
-        if yes_won is None:
-            continue
+        yes_won = res == "yes"
         we = (t.side == "YES" and yes_won) or (t.side == "NO" and not yes_won)
         t.status = "settled"
-        t.outcome = "yes" if yes_won else "no"
-        t.pnl_cents = round(realized_pnl_cents(we, t.ask_cents, t.size, CFG.fee_coefficient), 3)
+        t.outcome = res
+        fee = t.fee_cents if t.fee_cents else kalshi_taker_fee_cents(t.ask_cents, t.size, CFG.fee_coefficient)
+        if we:
+            t.pnl_cents = round((100 - t.ask_cents) * t.size - fee, 3)
+        else:
+            t.pnl_cents = round(-t.ask_cents * t.size - fee, 3)
         y = 1.0 if yes_won else 0.0
         p = t.model_prob if t.side == "YES" else 1 - t.model_prob
         t.brier = round((p - y) ** 2, 4)

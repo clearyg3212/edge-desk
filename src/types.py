@@ -63,6 +63,8 @@ class KalshiSnap:
     observed_at: Optional[str] = None
     close_time: Optional[str] = None
     page_latency_sec: float = 0.0
+    trading_active: bool = True
+    result: Optional[str] = None
 
 
 @dataclass

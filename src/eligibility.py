@@ -63,4 +63,6 @@ REASON_LABEL = {
     "crossed_book": "crossed book",
     "closed_market": "closed",
     "stale_quote": "stale quote",
+    "exchange_paused": "exchange paused",
+    "ladder_unconfirmed": "ladder unconfirmed",
 }

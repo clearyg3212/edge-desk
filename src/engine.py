@@ -45,13 +45,25 @@ def _base(**kw) -> Decision:
     return Decision(**defaults)
 
 
-def _iso_age_sec(iso: Optional[str], now: datetime) -> Optional[float]:
-    if not iso:
+def parse_iso(iso: Optional[str]) -> Optional[datetime]:
+    if not iso or not isinstance(iso, str):
         return None
+    s = iso.strip().replace("Z", "+00:00")
     try:
-        ts = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s)
     except ValueError:
         return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _iso_age_sec(iso: Optional[str], now: datetime) -> Optional[float]:
+    ts = parse_iso(iso)
+    if ts is None:
+        return None
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     return (now - ts).total_seconds()
 
 
@@ -72,6 +84,9 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
         return d
     if (market.status or "").lower() not in OPEN_STATUSES:
         d.reason, d.reason_tag = "closed_market", "closed_market"
+        return d
+    if not getattr(market, "trading_active", True):
+        d.reason, d.reason_tag = "exchange_paused", "exchange_paused"
         return d
     if ask is None:
         d.reason = "missing_price"
@@ -96,10 +111,7 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
     if obs_age is not None and obs_age > CFG.max_quote_age_sec:
         d.reason, d.reason_tag = "stale_quote", "stale_quote"
         return d
-    q_age = _iso_age_sec(market.quoted_at, now)
-    if q_age is not None and (q_age > CFG.max_quote_age_sec or q_age < -5):
-        d.reason, d.reason_tag = "stale_quote", "stale_quote"
-        return d
+    # quoted_at (Kalshi updated_time) is metadata — never use it for freshness.
     th = thesis(game, market, side, ask, model, ladder)
     d.model_prob, d.reason_tag, d.source = th["p"], th["tag"], th["source"]
     if th["reject"]:
@@ -159,6 +171,12 @@ def evaluate_slate(
     existing_tickets: Optional[List] = None,
 ) -> List[Decision]:
     CFG.assert_paper_safe()
+    uniq = {}
+    for m in markets:
+        prev = uniq.get(m.ticker)
+        if prev is None or (m.observed_at or "") >= (prev.observed_at or ""):
+            uniq[m.ticker] = m
+    markets = list(uniq.values())
     by_id = {g.game_id: g for g in games}
     models = {g.game_id: project_game(g) for g in games}
     totals: Dict[str, List[KalshiSnap]] = {}
@@ -192,8 +210,12 @@ def evaluate_slate(
         if not d.accepted:
             final.setdefault(key, d)
             continue
+        if key in final and final[key].accepted:
+            continue
         if d.ticker in seen:
             d.accepted, d.reason = False, "duplicate_ticker"
+            final.setdefault(key, d)
+            continue
         elif daily >= CFG.max_daily_positions:
             d.accepted, d.reason = False, "daily_limit"
         elif per_game.get(d.game_id, 0) >= CFG.max_positions_per_game:

@@ -108,7 +108,7 @@ def test_closed_market_rejected():
 
 def test_stale_quote_rejected():
     old = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    d = evaluate_slate([_game()], [_rfi(32, quoted_at=old)])
+    d = evaluate_slate([_game()], [_rfi(32, observed_at=old)])
     yes = [x for x in d if x.side == "YES"][0]
     assert not yes.accepted
     assert yes.reason == "stale_quote"
@@ -220,8 +220,8 @@ def test_settle_fees_in_pnl():
         label="x", kind="RFI", side="YES", line=0.5, ask_cents=32, model_prob=0.41,
         net_ev=8, size=10, reason_tag="ace_tax",
     )
-    settle([t], [g])
-    fee = kalshi_taker_fee_cents(32, 10)
+    settle([t], [g], {"T": {"status": "finalized", "result": "yes"}})
+    fee = t.fee_cents or kalshi_taker_fee_cents(32, 10)
     assert t.status == "settled"
     assert t.pnl_cents == (100 - 32) * 10 - fee
 
@@ -314,11 +314,11 @@ def test_dead_kalshi_is_invalid_not_quiet():
     assert any("FAILED" in w for w in r["warnings"])
 
 
-def test_future_quote_rejected():
-    fut = (datetime.now(timezone.utc) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    yes = [x for x in evaluate_slate([_game()], [_rfi(32, quoted_at=fut)]) if x.side == "YES"][0]
-    assert not yes.accepted
-    assert yes.reason == "stale_quote"
+def test_old_updated_time_is_not_stale():
+    old = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    yes = [x for x in evaluate_slate([_game()], [_rfi(32, quoted_at=old)]) if x.side == "YES"][0]
+    assert yes.accepted, yes
+    assert yes.reason_tag == "ace_tax"
 
 
 def test_slow_page_rejected():
@@ -361,6 +361,77 @@ def test_confirm_paper_kills_fill_if_refetch_dies():
     finally:
         scan_mod.fetch_ticker = old
         object.__setattr__(CFG, "exec_latency_sec", 1.0)
+
+
+def test_naive_observed_at_does_not_crash():
+    naive = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    yes = [x for x in evaluate_slate([_game()], [_rfi(32, observed_at=naive)]) if x.side == "YES"][0]
+    assert yes.accepted
+
+
+def test_exchange_pause_blocks_fill():
+    m = _rfi(32)
+    m.trading_active = False
+    yes = [x for x in evaluate_slate([_game()], [m]) if x.side == "YES"][0]
+    assert not yes.accepted
+    assert yes.reason == "exchange_paused"
+
+
+def test_mlb_final_does_not_settle_without_kalshi():
+    g = _game(phase="final", f1_away=1, f1_home=0)
+    t = Ticket(
+        id="a", opened_at="2026-08-29T00:00:00+00:00", ticker="T", game_id="g1",
+        label="x", kind="RFI", side="YES", line=0.5, ask_cents=32, model_prob=0.41,
+        net_ev=8, size=10, reason_tag="ace_tax", fee_cents=99,
+    )
+    settle([t], [g])
+    assert t.status == "open"
+
+
+def test_settle_uses_stored_fee():
+    t = Ticket(
+        id="a", opened_at="2026-08-29T00:00:00+00:00", ticker="T", game_id="g1",
+        label="x", kind="RFI", side="YES", line=0.5, ask_cents=32, model_prob=0.41,
+        net_ev=8, size=10, reason_tag="ace_tax", fee_cents=99,
+    )
+    settle([t], [_game()], {"T": {"status": "finalized", "result": "yes"}})
+    assert t.status == "settled"
+    assert t.pnl_cents == (100 - 32) * 10 - 99
+
+
+def test_duplicate_ticker_rows_do_not_kill_accept():
+    a = _rfi(32)
+    b = _rfi(32)
+    b.yes_ask = 32
+    d = evaluate_slate([_game()], [a, b])
+    yes = [x for x in d if x.side == "YES"]
+    assert sum(1 for x in yes if x.accepted) == 1
+
+
+def test_ladder_rejects_duplicate_strikes():
+    from .ladder import fit_ladder
+    m = _rfi(40)
+    m.kind = "TOTAL"
+    m.line = 8.5
+    m.yes_bid, m.yes_ask = 48, 52
+    assert fit_ladder([m, m, m]) is None
+
+
+def test_report_yes_only_eligible():
+    from .report import _yes_last_eligible
+    now = datetime.now(timezone.utc)
+    commence = (now + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = [
+        {"event": "candidate_observed", "side": "YES", "ticker": "A", "phase": "pregame",
+         "commence": commence, "ts": ts, "tag": "ace_tax"},
+        {"event": "candidate_observed", "side": "NO", "ticker": "A", "phase": "pregame",
+         "commence": commence, "ts": ts, "tag": "ace_tax"},
+        {"event": "execution_attempt", "side": "YES", "ticker": "A", "phase": "pregame",
+         "commence": commence, "ts": ts, "tag": "ace_tax"},
+    ]
+    last = _yes_last_eligible(rows)
+    assert len(last) == 1 and last[0]["side"] == "YES"
 
 
 def run() -> None:

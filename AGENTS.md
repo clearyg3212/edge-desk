@@ -39,8 +39,11 @@ Windows: `run.bat`. Tests must stay green (22+).
 - Price band 28–72¢, spread ≤ 5¢.
 - **NO depth** = `yes_bid_size_fp` (buying NO lifts the YES bid). Never `no_ask_size_fp` alone.
 - Kalshi scan is **invalid** unless both series fetches succeed. Failed feed ≠ quiet night. No tickets.
-- Freshness = page receipt time + page latency, not a fictional `price_updated_ts`. Missing quote ts is allowed if the page is fresh; future ts and slow pages are not.
-- Paper fill: wait `exec_latency_sec`, refetch ticker, fill only at the new ask/depth.
+- Freshness = page receipt + latency. **Never** Kalshi `updated_time`.
+- Paper fill: wait, refetch ticker **and ladder strikes**, fill at the new book.
+- Quotes: `candidate_observed` then `execution_attempt`. Report is YES-only, T-30m+.
+- Tickets settle from **Kalshi result/finalized**, not MLB scores. Snapshot `fee_cents` at fill.
+- `trading_active` must be true. Duplicate tickers keep the first accept.
 - 25m–16h is in **eligibility**, every thesis.
 - Game cap is for the life of `game_id`, not the UTC day.
 - `DataLock` around load → scan → settle → fill → save.

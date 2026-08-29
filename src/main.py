@@ -14,8 +14,8 @@ from .eligibility import REASON_LABEL
 from .engine import evaluate_slate
 from .ledger import load_tickets, paper_fill, save_tickets, settle
 from .lock import DataLock
-from .quotes import append_quotes, label_finals
-from .scan import confirm_paper, run_scan
+from .quotes import append_execution, append_quotes, label_finals
+from .scan import confirm_paper, fetch_ticker, run_scan
 from .types import Decision, KalshiSnap, MlbGame, Pitcher, Weather
 
 
@@ -109,6 +109,20 @@ def _log_decisions(decisions: list[Decision]) -> None:
             f.write(json.dumps(d.__dict__) + "\n")
 
 
+def _kalshi_results(tickets) -> dict:
+    out = {}
+    for t in tickets:
+        if getattr(t, "status", "open") != "open":
+            continue
+        try:
+            raw = fetch_ticker(t.ticker)
+        except Exception:
+            continue
+        if raw:
+            out[t.ticker] = {"status": raw.get("status"), "result": raw.get("result")}
+    return out
+
+
 def _one_scan(no_paper: bool) -> int:
     print("\nscanning MLB + Kalshi …")
     with DataLock(CFG.data_dir / "bot.lock"):
@@ -118,22 +132,31 @@ def _one_scan(no_paper: bool) -> int:
             print("warn:", w)
         if not scan.get("kalshi_ok"):
             print("KALSHI FEED INVALID — not a quiet night. no tickets.")
+        if scan.get("kalshi_ok") and not scan.get("trading_active", True):
+            print("EXCHANGE PAUSED — quotes only, no fills.")
         decisions, games = scan["decisions"], scan["games"]
+        markets = scan.get("markets") or []
         _print_board(decisions, games)
         _log_decisions(decisions)
         nq = append_quotes(decisions, games)
         nl = label_finals(games)
 
-        settle(tickets, games)
-        if not no_paper and scan.get("kalshi_ok"):
+        settle(tickets, games, _kalshi_results(tickets))
+        filled = 0
+        if not no_paper and scan.get("kalshi_ok") and scan.get("trading_active", True):
             by = {g.game_id: g for g in games}
-            filled = 0
+            sibs = {}
+            for m in markets:
+                if m.kind == "TOTAL" and m.game_id:
+                    sibs.setdefault(m.game_id, []).append(m.ticker)
             for d in decisions:
                 g = by.get(d.game_id)
                 if not g or not d.accepted:
                     continue
-                d2 = confirm_paper(d, g)
-                if g and paper_fill(d2, g, tickets):
+                d2 = confirm_paper(d, g, sibs.get(d.game_id) or [])
+                got = paper_fill(d2, g, tickets)
+                append_execution(d, d2, g, bool(got))
+                if got:
                     filled += 1
             print(f"\npapered {filled} new ticket(s)")
         elif not scan.get("kalshi_ok"):
@@ -170,7 +193,15 @@ def main(argv: list[str] | None = None) -> int:
         mins = max(10, args.loop)
         print(f"logging every {mins} min. leave this window open.")
         while True:
-            _one_scan(args.no_paper)
+            try:
+                _one_scan(args.no_paper)
+            except Exception as e:
+                CFG.log_dir.mkdir(parents=True, exist_ok=True)
+                print("SCAN FAILED:", type(e).__name__, e)
+                (CFG.log_dir / "heartbeat.json").write_text(
+                    json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "error": str(e)}),
+                    encoding="utf-8",
+                )
             print(f"\nsleeping {mins} min …")
             time.sleep(mins * 60)
     return _one_scan(args.no_paper)

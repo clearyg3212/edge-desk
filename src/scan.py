@@ -344,6 +344,8 @@ def _link(raw: dict, games: List[MlbGame]) -> Optional[KalshiSnap]:
         observed_at=observed,
         close_time=close_time,
         page_latency_sec=lat,
+        trading_active=bool(raw.get("_trading_active", True)),
+        result=(str(raw["result"]).lower() if raw.get("result") else None),
     )
 
 
@@ -373,9 +375,23 @@ def combine_kalshi(rfi: FeedResult, tot: FeedResult, games: List[MlbGame], exist
     }
 
 
-def confirm_paper(d, game: MlbGame):
-    """Wait, refetch ticker, fill only at the new executable ask/depth."""
+def fetch_exchange_status() -> dict:
+    u = "https://api.elections.kalshi.com/trade-api/v2/exchange/status"
+    try:
+        data = _get(u, timeout=10)
+        return {
+            "ok": True,
+            "trading_active": bool(data.get("trading_active", False)),
+            "raw": data,
+        }
+    except Exception as e:
+        return {"ok": False, "trading_active": False, "error": str(e)}
+
+
+def confirm_paper(d, game: MlbGame, ladder_tickers: Optional[List[str]] = None):
+    """Wait, refetch ticker (+ ladder strikes), fill only at the new book."""
     from .engine import score
+    from .ladder import fit_ladder
     from .model import project_game
 
     if CFG.exec_latency_sec > 0:
@@ -397,7 +413,33 @@ def confirm_paper(d, game: MlbGame):
         d.accepted = False
         d.reason = "stale_quote"
         return d
-    fresh = score(game, m, d.side, project_game(game), None)
+    ladder = None
+    if d.reason_tag == "ladder_kink":
+        sibs = []
+        for tkr in ladder_tickers or []:
+            if tkr == d.ticker:
+                continue
+            try:
+                sraw = fetch_ticker(tkr)
+            except Exception:
+                continue
+            if not sraw:
+                continue
+            sm = _link(sraw, [game])
+            if sm:
+                sibs.append(sm)
+        ladder = fit_ladder(sibs, exclude_ticker=d.ticker)
+        if not ladder:
+            d.accepted = False
+            d.reason = "ladder_unconfirmed"
+            d.reason_tag = "ladder_kink"
+            return d
+    fresh = score(game, m, d.side, project_game(game), ladder)
+    if d.reason_tag == "ladder_kink" and fresh.reason_tag != "ladder_kink":
+        fresh.accepted = False
+        fresh.reason = "ladder_unconfirmed"
+        fresh.reason_tag = "ladder_kink"
+        return fresh
     if fresh.accepted and fresh.ask_cents > d.ask_cents + 1:
         fresh.accepted = False
         fresh.reason = "stale_quote"
@@ -416,8 +458,18 @@ def run_scan(existing_tickets=None) -> dict:
         warnings.append(f"MLB feed failed: {e}")
     rfi = fetch_series("KXMLBRFI")
     tot = fetch_series("KXMLBTOTAL")
+    ex = fetch_exchange_status()
+    if not ex["ok"]:
+        warnings.append(f"Kalshi exchange status FAILED: {ex.get('error')}")
+    elif not ex["trading_active"]:
+        warnings.append("Kalshi trading_active=false (exchange pause)")
+    live = bool(ex.get("ok") and ex.get("trading_active"))
+    for row in list(rfi.raw) + list(tot.raw):
+        row["_trading_active"] = live
     packed = combine_kalshi(rfi, tot, games, existing_tickets)
     warnings.extend(packed["warnings"])
+    if packed["kalshi_ok"] and not live:
+        warnings.append("quotes collected; fills blocked (exchange pause)")
     return {
         "scanned_at": time.time(),
         "games": games,
@@ -425,5 +477,6 @@ def run_scan(existing_tickets=None) -> dict:
         "decisions": packed["decisions"],
         "mlb_ok": mlb_ok,
         "kalshi_ok": packed["kalshi_ok"],
+        "trading_active": live,
         "warnings": warnings,
     }
