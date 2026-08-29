@@ -1,56 +1,29 @@
-# EDGE DESK — paper MLB vs Kalshi
+# EDGE DESK — Windows paper bot
 
-A **paper-only** bot. It never logs into Kalshi, never sends an order, never needs an API key.
+Paper-only Kalshi MLB scanner. **Never places a live order.**
 
-It reads public MLB (starters, weather, scores) and public Kalshi (RFI + totals), then papers a ticket **only** if a named thesis still has ≥6¢ expected value **after** Kalshi’s fee.
+## Install on Windows
 
-## Run on your PC
+1. Install Python 3.10+ from https://www.python.org/downloads/
+   - On the installer, tick **Add python.exe to PATH**
+2. On this GitHub page: **Code → Download ZIP**
+3. Unzip to Desktop (folder will be `edge-desk-main`)
+4. Double-click **run.bat**
 
-Needs **Python 3.10+**. No pip packages.
-
-```text
-Windows:  double-click run.bat
-          or:  py -3 -m src.test_core
-               py -3 -m src.main --once
-
-Mac/Linux:  chmod +x run.sh && ./run.sh
-            python3 -m src.test_core
-            python3 -m src.main --once
-```
-
-`--synthetic-only` skips the network and just proves the engine.
-
-## When it trades (paper)
-
-Fail any step → sit.
-
-1. Pregame, confirmed starters with 20+ IP, 25 min–16 h to pitch  
-2. Real ask on the book, 28–72¢, spread ≤5¢  
-3. A **story**, not “the model disagrees”:
-   - Kalshi totals ladder disagrees with itself
-   - Two aces and YRFI is still cheap (public stuffed NRFI)
-   - Two bad starters, YRFI hasn’t moved
-   - Serious wind/heat/cold, inside 2.5 hours, right direction
-   - Coors-under fade  
-4. After the 7% quadratic fee: **6¢ net EV**, **10% ROI**, **7¢** vs the ask  
-5. One ticket per game, four a day, tiny size (0.25% of a $10k paper bank)
-
-Most nights print **zero**. That is the point.
-
-## Files it writes
-
-| path | what |
-|---|---|
-| `logs/decisions.jsonl` | every accept and reject |
-| `data/tickets.jsonl` | paper blotter; settles when MLB goes final |
-| `wallpaper.jpg` | 1920×1080 desktop background |
-| `thumbnail.png` | square icon |
-
-## Hard rules
-
-- `paper_mode` and `dry_run` are frozen on. Flip them and the engine refuses to start.  
-- Price = executable ask only. Missing ask = pass. Never `100 − yes_bid`.  
-- Spread is a liquidity filter, not an EV haircut.  
-- Fee: `0.07 × n × p × (1−p)`, round the **total** up to a cent, then share.
+That's the whole app. First run prints tests, then scans tonight's MLB vs Kalshi. Most nights it papers **zero** tickets. That's working.
 
 Desktop wallpaper: right-click `wallpaper.jpg` → Set as desktop background.
+
+## What it does
+
+Reads public MLB + public Kalshi. Papers a ticket only if a named thesis still has at least 6 cents expected value after Kalshi's fee. Settled P&L subtracts that fee.
+
+No API key. No pip install.
+
+## Review in ChatGPT or Codex
+
+This repo is **public**. Paste:
+
+> Review https://github.com/clearyg3212/edge-desk — read AGENTS.md first. Paper-only. Do not add live Kalshi orders.
+
+Full prompt: [REVIEW.md](REVIEW.md). Codex: open the repo and follow `AGENTS.md`.
