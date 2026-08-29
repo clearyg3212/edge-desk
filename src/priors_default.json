@@ -1,0 +1,77 @@
+{
+  "built_at": "2026-08-29T22:01:06Z",
+  "method": "prior-year ERA, F1 runs>0, shrink k=50 toward 0.49",
+  "source": "mlb-statsapi",
+  "league": {
+    "n": 5849,
+    "hits": 2849,
+    "raw": 0.4871,
+    "p": 0.4871,
+    "se": 0.0065
+  },
+  "two_ace": {
+    "n": 414,
+    "hits": 202,
+    "raw": 0.4879,
+    "p": 0.4881,
+    "se": 0.0246
+  },
+  "two_soft": {
+    "n": 245,
+    "hits": 128,
+    "raw": 0.5224,
+    "p": 0.5169,
+    "se": 0.0319
+  },
+  "one_ace": {
+    "n": 2559,
+    "hits": 1199,
+    "raw": 0.4685,
+    "p": 0.469,
+    "se": 0.0099
+  },
+  "missing_prior": {
+    "n": 3460,
+    "hits": 1747,
+    "raw": 0.5049,
+    "p": 0.5047,
+    "se": 0.0085
+  },
+  "ace_tax_ev_if_this_p": [
+    {
+      "ask": 28,
+      "net_ev": 18.81,
+      "take": true
+    },
+    {
+      "ask": 32,
+      "net_ev": 14.81,
+      "take": true
+    },
+    {
+      "ask": 36,
+      "net_ev": 10.81,
+      "take": true
+    },
+    {
+      "ask": 40,
+      "net_ev": 6.81,
+      "take": true
+    },
+    {
+      "ask": 45,
+      "net_ev": 1.81,
+      "take": false
+    },
+    {
+      "ask": 50,
+      "net_ev": -3.19,
+      "take": false
+    },
+    {
+      "ask": 55,
+      "net_ev": -8.19,
+      "take": false
+    }
+  ]
+}
