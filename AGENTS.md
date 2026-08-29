@@ -19,7 +19,8 @@ Windows: `run.bat`. Tests must stay green (22+).
 1. `src/config.py` — frozen `paper_mode=True`, `dry_run=True`. Engine refuses to construct if either flips.
 2. `src/fees.py` — Kalshi taker fee: `0.07 * n * p * (1-p)`, **ceil the total** to a cent. `realized_pnl_cents` **subtracts that fee**.
 3. `src/matching.py` — ticker parse; **away/home order is exact**, not a set.
-4. `src/thesis.py` — **only named theses trade**. p for ace/soft comes from shrunk Poisson, not a magic 41/56.
+4. `src/priors.py` + `src/calibrate.py` — empirical YRFI from MLB (prior-year ERA). `ace_tax` uses `two_ace.p`, not 0.41.
+5. `src/thesis.py` — **only named theses trade**.
 5. `src/eligibility.py` — pregame, confirmed starters, 25m–16h, Coors NRFI veto, half-point totals.
 6. `src/engine.py` — ask-only, depth required, crossed books rejected, EV/ROI gates, **caps persist via existing tickets**.
 7. `src/scan.py` — public MLB + public Kalshi. Match window 6h. Quote timestamps stored.

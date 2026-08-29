@@ -130,6 +130,16 @@ def test_ace_tax_takes_cheap_yes():
     assert yes.observed_at
 
 
+def test_ace_tax_uses_mlb_prior_not_magic_41():
+    from .priors import yrfi_p
+    p = yrfi_p("two_ace")
+    assert 0.45 <= p <= 0.55, p
+    yes = [x for x in evaluate_slate([_game()], [_rfi(32)]) if x.side == "YES"][0]
+    assert yes.accepted
+    assert abs(yes.model_prob - p) < 1e-9
+    assert yes.source.startswith("mlb-prior")
+
+
 def test_live_game_blocked():
     d = evaluate_slate([_game(phase="live")], [_rfi(32)])
     assert all(x.reason == "in_progress" for x in d)

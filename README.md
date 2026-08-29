@@ -15,12 +15,14 @@ Windows:  double-click run.bat
 
           paper log (leave open):  double-click run_loop.bat
           morning after:           py -3 -m src.report
+          rebuild YRFI priors:     py -3 -m src.calibrate
 
 Mac/Linux:  chmod +x run.sh && ./run.sh
             python3 -m src.test_core
             python3 -m src.main --once
             python3 -m src.main --loop 30
             python3 -m src.report
+            python3 -m src.calibrate
 ```
 
 `--synthetic-only` skips the network and just proves the engine.
