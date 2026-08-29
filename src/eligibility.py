@@ -57,4 +57,8 @@ REASON_LABEL = {
     "too_early": "too early",
     "thin_sample": "thin sample",
     "live_mode_blocked": "live blocked",
+    "thin_book": "no depth",
+    "crossed_book": "crossed book",
+    "closed_market": "closed",
+    "stale_quote": "stale quote",
 }

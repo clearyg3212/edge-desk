@@ -1,8 +1,9 @@
-from typing import Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Dict, Iterable, List, Optional
 
-from .config import CFG
+from .config import CFG, OPEN_STATUSES
 from .eligibility import eligibility
-from .fees import net_ev_cents
+from .fees import kalshi_taker_fee_cents, net_ev_cents
 from .ladder import fit_ladder
 from .model import project_game
 from .thesis import thesis
@@ -11,18 +12,24 @@ from .types import Decision, KalshiSnap, MlbGame, ModelEstimate
 
 def _ask(market: KalshiSnap, side: str):
     if side == "YES":
-        spread = (market.yes_ask - market.yes_bid) if market.yes_ask is not None and market.yes_bid is not None else 99
+        if market.yes_ask is not None and market.yes_bid is not None:
+            spread = market.yes_ask - market.yes_bid
+        else:
+            spread = 99
         return market.yes_ask, spread, market.yes_ask_size
-    spread = (market.no_ask - market.no_bid) if market.no_ask is not None and market.no_bid is not None else 99
+    if market.no_ask is not None and market.no_bid is not None:
+        spread = market.no_ask - market.no_bid
+    else:
+        spread = 99
     return market.no_ask, spread, market.no_ask_size
 
 
 def _size(ask: float, ask_size: Optional[float]) -> int:
+    if ask_size is None or ask_size < CFG.min_ask_size:
+        return 0
     risk = CFG.paper_bankroll * (CFG.risk_per_trade_pct / 100.0)
     n = int(risk / max(0.01, ask / 100.0))
-    n = max(1, min(n, CFG.max_contracts_per_trade))
-    if ask_size and ask_size > 0:
-        n = min(n, max(1, int(ask_size)))
+    n = max(1, min(n, CFG.max_contracts_per_trade, int(ask_size)))
     return n
 
 
@@ -31,31 +38,58 @@ def _base(**kw) -> Decision:
         ticker="", game_id="", kind="", side="", line=None, ask_cents=0.0, spread_cents=99.0,
         model_prob=0.5, raw_ev=-999.0, fee=0.0, net_ev=-999.0, roi=-999.0, size=0,
         accepted=False, reason="missing_price", reason_tag="none", source="f1-poisson",
+        fee_total=0.0, quoted_at=None, observed_at=None,
     )
     defaults.update(kw)
     return Decision(**defaults)
 
 
-def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, ladder) -> Decision:
+def _quote_age_sec(market: KalshiSnap, now: datetime) -> Optional[float]:
+    if not market.quoted_at:
+        return None
+    try:
+        ts = datetime.fromisoformat(market.quoted_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (now - ts).total_seconds()
+
+
+def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, ladder, now: Optional[datetime] = None) -> Decision:
     CFG.assert_paper_safe()
+    now = now or datetime.now(timezone.utc)
+    observed = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     ask, spread, ask_size = _ask(market, side)
     d = _base(
         ticker=market.ticker, game_id=game.game_id, kind=market.kind, side=side,
         line=market.line, ask_cents=ask or 0.0, spread_cents=spread,
+        quoted_at=market.quoted_at, observed_at=market.observed_at or observed,
     )
     gate = eligibility(game, market, side)
     if gate:
         d.reason, d.reason_tag = gate, gate
         return d
+    if (market.status or "").lower() not in OPEN_STATUSES:
+        d.reason, d.reason_tag = "closed_market", "closed_market"
+        return d
     if ask is None:
         d.reason = "missing_price"
         return d
     d.ask_cents = ask
+    if spread < 0:
+        d.reason, d.reason_tag = "crossed_book", "crossed_book"
+        return d
+    if market.yes_ask is not None and market.no_ask is not None and market.yes_ask + market.no_ask < 100:
+        d.reason, d.reason_tag = "crossed_book", "crossed_book"
+        return d
     if ask < CFG.min_price_cents or ask > CFG.max_price_cents:
         d.reason = "price_out_of_band"
         return d
     if spread > CFG.max_spread_cents:
         d.reason = "spread_too_wide"
+        return d
+    age = _quote_age_sec(market, now)
+    if age is not None and age > CFG.max_quote_age_sec:
+        d.reason, d.reason_tag = "stale_quote", "stale_quote"
         return d
     th = thesis(game, market, side, ask, model, ladder)
     d.model_prob, d.reason_tag, d.source = th["p"], th["tag"], th["source"]
@@ -65,10 +99,17 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
     if th["p"] * 100 - ask < CFG.min_disagreement_cents:
         d.reason = "disagreement_too_small"
         return d
+    if ask_size is None or ask_size < CFG.min_ask_size:
+        d.reason, d.reason_tag = "thin_book", "thin_book"
+        return d
     size = _size(ask, ask_size)
+    if size < 1:
+        d.reason, d.reason_tag = "thin_book", "thin_book"
+        return d
     ev = net_ev_cents(th["p"], ask, size, CFG.fee_coefficient)
-    d.size, d.raw_ev, d.fee, d.net_ev, d.roi = (
-        size, ev["raw_ev_cents"], ev["fee_cents"], ev["net_ev_cents"], ev["expected_roi"]
+    fee_total = kalshi_taker_fee_cents(ask, size, CFG.fee_coefficient)
+    d.size, d.raw_ev, d.fee, d.net_ev, d.roi, d.fee_total = (
+        size, ev["raw_ev_cents"], ev["fee_cents"], ev["net_ev_cents"], ev["expected_roi"], fee_total,
     )
     if d.net_ev < CFG.min_net_edge_cents:
         d.reason = "edge_too_small"
@@ -80,7 +121,30 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
     return d
 
 
-def evaluate_slate(games: List[MlbGame], markets: List[KalshiSnap]) -> List[Decision]:
+def _seed_caps(existing: Iterable) -> tuple:
+    today = datetime.now(timezone.utc).date().isoformat()
+    daily, per_game, seen = 0, {}, set()
+    for t in existing or []:
+        status = getattr(t, "status", None) or (t.get("status") if isinstance(t, dict) else None)
+        if status == "void":
+            continue
+        opened = getattr(t, "opened_at", None) or (t.get("opened_at") if isinstance(t, dict) else "") or ""
+        if opened[:10] != today:
+            continue
+        daily += 1
+        gid = getattr(t, "game_id", None) or (t.get("game_id") if isinstance(t, dict) else "")
+        ticker = getattr(t, "ticker", None) or (t.get("ticker") if isinstance(t, dict) else "")
+        per_game[gid] = per_game.get(gid, 0) + 1
+        if ticker:
+            seen.add(ticker)
+    return daily, per_game, seen
+
+
+def evaluate_slate(
+    games: List[MlbGame],
+    markets: List[KalshiSnap],
+    existing_tickets: Optional[List] = None,
+) -> List[Decision]:
     CFG.assert_paper_safe()
     by_id = {g.game_id: g for g in games}
     models = {g.game_id: project_game(g) for g in games}
@@ -88,17 +152,18 @@ def evaluate_slate(games: List[MlbGame], markets: List[KalshiSnap]) -> List[Deci
     for m in markets:
         if m.kind == "TOTAL" and m.game_id:
             totals.setdefault(m.game_id, []).append(m)
-    ladders = {gid: fit_ladder(arr) for gid, arr in totals.items()}
 
     scored: List[Decision] = []
     for m in markets:
         game = by_id.get(m.game_id or "")
         if not game:
             scored.append(_base(ticker=m.ticker, kind=m.kind, line=m.line, ask_cents=m.yes_ask or 0,
-                                reason="unmatched", reason_tag="unmatched", side="YES"))
+                                reason="unmatched", reason_tag="unmatched", side="YES",
+                                quoted_at=m.quoted_at, observed_at=m.observed_at))
             continue
         model = models[game.game_id]
-        ladder = ladders.get(game.game_id)
+        others = [x for x in totals.get(game.game_id, []) if x.ticker != m.ticker]
+        ladder = fit_ladder(others, exclude_ticker=m.ticker)
         if m.kind == "RFI":
             scored.append(score(game, m, "YES", model, ladder))
             scored.append(score(game, m, "NO", model, ladder))
@@ -107,7 +172,7 @@ def evaluate_slate(games: List[MlbGame], markets: List[KalshiSnap]) -> List[Deci
             scored.append(score(game, m, "NO", model, ladder))
 
     ranked = sorted(scored, key=lambda d: d.net_ev, reverse=True)
-    daily, seen, per_game = 0, set(), {}
+    daily, per_game, seen = _seed_caps(existing_tickets)
     final = {}
     for d in ranked:
         key = f"{d.ticker}:{d.side}"

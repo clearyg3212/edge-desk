@@ -1,5 +1,6 @@
 from typing import List, Optional
 
+from .config import CFG
 from .model import poisson_cdf
 from .types import KalshiSnap
 
@@ -16,16 +17,19 @@ def _mid_yes(m: KalshiSnap) -> Optional[float]:
     return m.yes_ask
 
 
-def fit_ladder(markets: List[KalshiSnap]) -> Optional[dict]:
+def fit_ladder(markets: List[KalshiSnap], exclude_ticker: Optional[str] = None) -> Optional[dict]:
+    """Fit λ to *other* strikes. The evaluated market is excluded so this is not circular."""
     points = []
     for m in markets:
+        if exclude_ticker and m.ticker == exclude_ticker:
+            continue
         if m.kind != "TOTAL" or m.line is None:
             continue
         mid = _mid_yes(m)
         if mid is None or mid <= 8 or mid >= 92:
             continue
         points.append((m.line, mid / 100.0))
-    if len(points) < 2:
+    if len(points) < CFG.ladder_min_points:
         return None
     best_lam, best_err = 8.5, 1e18
     lam = 5.0

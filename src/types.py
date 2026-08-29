@@ -59,6 +59,9 @@ class KalshiSnap:
     no_ask_size: Optional[float]
     status: str
     game_id: Optional[str]
+    quoted_at: Optional[str] = None
+    observed_at: Optional[str] = None
+    close_time: Optional[str] = None
 
 
 @dataclass
@@ -90,3 +93,6 @@ class Decision:
     reason: str
     reason_tag: str
     source: str
+    fee_total: float = 0.0
+    quoted_at: Optional[str] = None
+    observed_at: Optional[str] = None

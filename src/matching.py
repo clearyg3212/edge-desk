@@ -86,4 +86,6 @@ def is_half_point(line: Optional[float]) -> bool:
 
 
 def same_matchup(a_away: str, a_home: str, b_away: str, b_home: str) -> bool:
-    return {a_away, a_home} == {b_away, b_home} and len({a_away, a_home}) == 2
+    """Exact away/home order. Kalshi ticker is away then home; reversing is a different game."""
+    return a_away == b_away and a_home == b_home and a_away != a_home
+

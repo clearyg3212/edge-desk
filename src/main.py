@@ -120,14 +120,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print("\nscanning MLB + Kalshi …")
-    scan = run_scan()
+    tickets = load_tickets()
+    scan = run_scan(existing_tickets=tickets)
     for w in scan["warnings"]:
         print("warn:", w)
     decisions, games = scan["decisions"], scan["games"]
     _print_board(decisions, games)
     _log_decisions(decisions)
 
-    tickets = load_tickets()
     settle(tickets, games)
     if not args.no_paper:
         by = {g.game_id: g for g in games}

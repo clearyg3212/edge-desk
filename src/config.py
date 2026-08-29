@@ -14,6 +14,7 @@ class BotConfig:
     min_price_cents: float = 28.0
     max_price_cents: float = 72.0
     max_spread_cents: float = 5.0
+    min_ask_size: float = 1.0
     paper_bankroll: float = 10_000.0
     risk_per_trade_pct: float = 0.25
     max_contracts_per_trade: int = 10
@@ -27,6 +28,9 @@ class BotConfig:
     league_f1_lambda: float = 0.48
     league_rpg: float = 4.45
     shrink_weight: float = 0.50
+    match_window_hours: float = 6.0
+    ladder_min_points: int = 3
+    max_quote_age_sec: float = 180.0
     log_dir: Path = ROOT / "logs"
     data_dir: Path = ROOT / "data"
 
@@ -36,3 +40,4 @@ class BotConfig:
 
 
 CFG = BotConfig()
+OPEN_STATUSES = frozenset({"open", "active"})

@@ -2,10 +2,11 @@ import json
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
+from .config import CFG
 from .engine import evaluate_slate
 from .matching import canon_team, parse_kalshi_ticker, same_matchup
 from .parks import DOME_OR_RETRACT
@@ -213,8 +214,30 @@ def _link(raw: dict, games: List[MlbGame]) -> Optional[KalshiSnap]:
             dt = abs(datetime.fromisoformat(g.commence_iso.replace("Z", "+00:00")).timestamp() - guess) if guess else 0
             if dt < best_dt:
                 best_dt, best = dt, g
-        if best and (best_dt < 18 * 3600 or guess is None):
-            game_id = best.game_id
+        if best:
+            if guess is None:
+                if best.official_date == parsed.date_key:
+                    game_id = best.game_id
+            elif best_dt < CFG.match_window_hours * 3600:
+                game_id = best.game_id
+    observed = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    quoted = None
+    for key in ("price_updated_ts", "last_price_updated_ts", "updated_ts"):
+        raw_ts = raw.get(key)
+        if raw_ts is None:
+            continue
+        try:
+            ts = float(raw_ts)
+            if ts > 1e12:
+                ts /= 1000.0
+            quoted = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            break
+        except (TypeError, ValueError, OSError):
+            continue
+    close_time = None
+    close_raw = raw.get("close_time") or raw.get("expiration_time")
+    if isinstance(close_raw, str):
+        close_time = close_raw
     return KalshiSnap(
         ticker=ticker,
         title=str(raw.get("title") or raw.get("yes_sub_title") or ticker),
@@ -230,10 +253,13 @@ def _link(raw: dict, games: List[MlbGame]) -> Optional[KalshiSnap]:
         no_ask_size=float(raw["no_ask_size_fp"]) if raw.get("no_ask_size_fp") is not None else None,
         status=str(raw.get("status") or ""),
         game_id=game_id,
+        quoted_at=quoted,
+        observed_at=observed,
+        close_time=close_time,
     )
 
 
-def run_scan() -> dict:
+def run_scan(existing_tickets=None) -> dict:
     warnings = []
     games: List[MlbGame] = []
     mlb_ok = kalshi_ok = False
@@ -249,7 +275,7 @@ def run_scan() -> dict:
         kalshi_ok = True
     except Exception as e:
         warnings.append(f"Kalshi feed failed: {e}")
-    decisions = evaluate_slate(games, markets)
+    decisions = evaluate_slate(games, markets, existing_tickets=existing_tickets)
     return {
         "scanned_at": time.time(),
         "games": games,

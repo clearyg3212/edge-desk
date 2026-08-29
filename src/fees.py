@@ -34,3 +34,16 @@ def net_ev_cents(
         "net_ev_cents": round(net, 3),
         "expected_roi": round(roi, 4),
     }
+
+
+def realized_pnl_cents(
+    won: bool,
+    ask_cents: float,
+    contracts: int,
+    fee_coefficient: float = 0.07,
+) -> float:
+    """Settled P&L after the taker fee paid at fill. Fee is never refunded."""
+    fee = kalshi_taker_fee_cents(ask_cents, contracts, fee_coefficient)
+    if won:
+        return (100.0 - ask_cents) * contracts - fee
+    return -ask_cents * contracts - fee

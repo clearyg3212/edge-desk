@@ -45,9 +45,12 @@ def thesis(
         if _thin(game):
             return {"p": 0.5, "tag": "thin_sample", "source": "f1-poisson", "reject": "thin_sample"}
         if _both_aces(game) and side == "YES" and ask <= 36:
-            return {"p": 0.41, "tag": "ace_tax", "source": "ace-tax", "reject": None}
+            # Gate is structural (public stuffed NRFI). p comes from the shrunk Poisson, capped.
+            p = min(model.yrfi, 0.42)
+            return {"p": p, "tag": "ace_tax", "source": "poisson+ace-gate", "reject": None}
         if _both_soft(game) and side == "YES" and ask <= 48:
-            return {"p": 0.56, "tag": "soft_arm", "source": "soft-arms", "reject": None}
+            p = model.yrfi
+            return {"p": p, "tag": "soft_arm", "source": "poisson+soft-gate", "reject": None}
 
     if mins > CFG.max_hours_to_pitch * 60:
         return {"p": 0.5, "tag": "too_early", "source": "f1-poisson", "reject": "too_early"}
