@@ -364,14 +364,16 @@ def test_confirm_paper_kills_fill_if_refetch_dies():
     yes = [x for x in evaluate_slate([_game()], [_rfi(32)]) if x.side == "YES"][0]
     assert yes.accepted
     object.__setattr__(CFG, "exec_latency_sec", 0.0)
-    old = scan_mod.fetch_ticker
+    old_fetch, old_ex = scan_mod.fetch_ticker, scan_mod.fetch_exchange_status
     scan_mod.fetch_ticker = lambda ticker: None
+    scan_mod.fetch_exchange_status = lambda: {"ok": True, "trading_active": True}
     try:
         out = scan_mod.confirm_paper(yes, _game())
         assert not out.accepted
         assert out.reason == "stale_quote"
     finally:
-        scan_mod.fetch_ticker = old
+        scan_mod.fetch_ticker = old_fetch
+        scan_mod.fetch_exchange_status = old_ex
         object.__setattr__(CFG, "exec_latency_sec", 1.0)
 
 
@@ -436,14 +438,48 @@ def test_report_yes_only_eligible():
     ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = [
         {"event": "candidate_observed", "side": "YES", "ticker": "A", "phase": "pregame",
-         "commence": commence, "ts": ts, "tag": "ace_tax"},
+         "commence": commence, "ts": ts, "tag": "ace_tax", "model_p": 0.488},
         {"event": "candidate_observed", "side": "NO", "ticker": "A", "phase": "pregame",
-         "commence": commence, "ts": ts, "tag": "ace_tax"},
+         "commence": commence, "ts": ts, "tag": "ace_tax", "model_p": 0.512},
+        {"event": "candidate_observed", "side": "YES", "ticker": "A", "phase": "pregame",
+         "commence": commence, "ts": ts, "tag": "stale_quote", "model_p": 0.5},
         {"event": "execution_attempt", "side": "YES", "ticker": "A", "phase": "pregame",
-         "commence": commence, "ts": ts, "tag": "ace_tax"},
+         "commence": commence, "ts": ts, "tag": "ace_tax", "model_p": 0.488},
     ]
     last = _yes_last_eligible(rows)
-    assert len(last) == 1 and last[0]["side"] == "YES"
+    assert len(last) == 1 and last[0]["side"] == "YES" and last[0]["model_p"] == 0.488
+
+
+def test_determined_does_not_settle():
+    t = Ticket(
+        id="a", opened_at="2026-08-29T00:00:00+00:00", ticker="T", game_id="g1",
+        label="x", kind="RFI", side="YES", line=0.5, ask_cents=32, model_prob=0.41,
+        net_ev=8, size=10, reason_tag="ace_tax", fee_cents=2,
+    )
+    settle([t], [_game()], {"T": {"status": "determined", "result": "yes"}})
+    assert t.status == "open"
+    settle([t], [_game()], {"T": {"status": "finalized", "result": "yes"}})
+    assert t.status == "settled"
+
+
+def test_stale_keeps_forecast_tag():
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    yes = [x for x in evaluate_slate([_game()], [_rfi(32, observed_at=old)]) if x.side == "YES"][0]
+    assert yes.reason == "stale_quote"
+    assert yes.reason_tag == "ace_tax"
+    assert abs(yes.model_prob - 0.5) > 0.01
+
+
+def test_candidate_ids_are_unique_and_present():
+    d = evaluate_slate([_game()], [_rfi(32)])
+    ids = [x.candidate_id for x in d if x.candidate_id]
+    assert ids and len(ids) == len(set(ids))
+
+
+def test_ny_tz_import_does_not_crash():
+    from .config import ET, now_et
+    now_et()
+    assert ET is not None
 
 
 def run() -> None:

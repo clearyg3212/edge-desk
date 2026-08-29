@@ -100,3 +100,4 @@ class Decision:
     quoted_at: Optional[str] = None
     observed_at: Optional[str] = None
     ask_size: Optional[float] = None
+    candidate_id: str = ""

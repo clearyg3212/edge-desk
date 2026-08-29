@@ -10,6 +10,11 @@ from .ledger import load_tickets
 from .quotes import load_outcomes, load_quotes
 
 
+FORECAST_TAGS = frozenset({
+    "ace_tax", "soft_arm", "ladder_kink", "coors", "stale_weather", "model_vs_ask",
+})
+
+
 def _minutes_before(q: dict) -> Optional[float]:
     start = parse_iso(q.get("commence"))
     ts = parse_iso(q.get("ts"))
@@ -26,6 +31,14 @@ def _yes_last_eligible(quotes: list[dict]) -> list[dict]:
         if q.get("side") != "YES":
             continue
         if q.get("phase") not in (None, "pregame"):
+            continue
+        if q.get("tag") not in FORECAST_TAGS:
+            continue
+        try:
+            p = float(q.get("model_p") or 0)
+        except (TypeError, ValueError):
+            continue
+        if p <= 0.0 or p >= 1.0:
             continue
         mins = _minutes_before(q)
         if mins is None or mins < 30:

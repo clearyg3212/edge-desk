@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
-from zoneinfo import ZoneInfo
+from .config import ET
 
 from .config import CFG
 from .fees import kalshi_taker_fee_cents, realized_pnl_cents
@@ -72,7 +72,7 @@ def paper_fill(d: Decision, game: MlbGame, tickets: List[Ticket]) -> Optional[Ti
     tid = f"{d.ticker}:{d.side}:{d.game_id}"
     if any(t.id == tid for t in tickets):
         return None
-    et = ZoneInfo("America/New_York")
+    et = ET
     today = datetime.now(et).date().isoformat()
     todays = []
     for t in tickets:
@@ -116,7 +116,7 @@ def paper_fill(d: Decision, game: MlbGame, tickets: List[Ticket]) -> Optional[Ti
     return t
 
 
-TERMINAL_STATUS = frozenset({"finalized", "determined", "settled"})
+TERMINAL_STATUS = frozenset({"finalized"})
 
 
 def settle(tickets: List[Ticket], games: List[MlbGame], market_results: Optional[dict] = None) -> None:

@@ -9,7 +9,8 @@ It reads public MLB (starters, weather, scores) and public Kalshi (RFI + totals)
 Needs **Python 3.10+**. No pip packages.
 
 ```text
-Windows:  double-click run.bat
+Windows:  first time: double-click setup.bat
+          then: double-click run.bat
           or:  py -3 -m src.test_core
                py -3 -m src.main --once
 

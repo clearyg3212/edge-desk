@@ -1,7 +1,22 @@
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+try:
+    from zoneinfo import ZoneInfo
+
+    try:
+        ET = ZoneInfo("America/New_York")
+    except Exception:
+        ET = timezone(timedelta(hours=-4))
+except Exception:
+    ET = timezone(timedelta(hours=-4))
+
+
+def now_et() -> datetime:
+    return datetime.now(ET)
 
 
 @dataclass(frozen=True)

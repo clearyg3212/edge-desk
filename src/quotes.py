@@ -104,7 +104,7 @@ def append_quotes(decisions: Iterable[Decision], games: Iterable[MlbGame]) -> in
                 reason=d.reason,
                 accepted=d.accepted,
                 event="candidate_observed",
-                candidate_id=f"{d.ticker}:{d.side}:{d.game_id}:{ts}",
+                candidate_id=d.candidate_id or f"{d.ticker}:{d.side}:{d.game_id}:{ts}",
                 orig_ask=d.ask_cents,
             )
             f.write(json.dumps(asdict(row)) + "\n")
@@ -182,7 +182,7 @@ def load_quotes() -> List[dict]:
 
 def append_execution(original: Decision, confirmed: Decision, game: MlbGame, filled: bool) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    cid = f"{original.ticker}:{original.side}:{original.game_id}"
+    cid = original.candidate_id or confirmed.candidate_id
     row = QuoteRow(
         ts=ts,
         ticker=original.ticker,

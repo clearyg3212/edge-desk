@@ -5,16 +5,14 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
-from zoneinfo import ZoneInfo
 
-from .config import CFG
+from .config import CFG, ET
 from .engine import evaluate_slate
 from .matching import canon_team, parse_kalshi_ticker, same_matchup
 from .parks import DOME_OR_RETRACT
 from .types import KalshiSnap, MlbGame, Pitcher, Weather
 
 UA = {"User-Agent": "edge-desk/1.0-paper", "Accept": "application/json"}
-ET = ZoneInfo("America/New_York")
 
 
 def _get(url: str, timeout: int = 15) -> Any:
@@ -389,30 +387,20 @@ def fetch_exchange_status() -> dict:
 
 
 def confirm_paper(d, game: MlbGame, ladder_tickers: Optional[List[str]] = None):
-    """Wait, refetch ticker (+ ladder strikes), fill only at the new book."""
-    from .engine import score
+    """Siblings first, target last. Recheck exchange pause. Keep candidate_id."""
+    from .engine import _iso_age_sec, score
     from .ladder import fit_ladder
     from .model import project_game
 
+    cid = d.candidate_id
     if CFG.exec_latency_sec > 0:
         time.sleep(CFG.exec_latency_sec)
-    try:
-        raw = fetch_ticker(d.ticker)
-    except Exception:
+    ex = fetch_exchange_status()
+    if not ex.get("ok") or not ex.get("trading_active"):
         d.accepted = False
-        d.reason = "stale_quote"
-        d.reason_tag = "stale_quote"
+        d.reason = "exchange_paused"
         return d
-    if not raw:
-        d.accepted = False
-        d.reason = "stale_quote"
-        d.reason_tag = "stale_quote"
-        return d
-    m = _link(raw, [game])
-    if not m:
-        d.accepted = False
-        d.reason = "stale_quote"
-        return d
+    now = datetime.now(timezone.utc)
     ladder = None
     if d.reason_tag == "ladder_kink":
         sibs = []
@@ -426,15 +414,41 @@ def confirm_paper(d, game: MlbGame, ladder_tickers: Optional[List[str]] = None):
             if not sraw:
                 continue
             sm = _link(sraw, [game])
-            if sm:
-                sibs.append(sm)
+            if not sm:
+                continue
+            if sm.page_latency_sec and sm.page_latency_sec > CFG.max_page_latency_sec:
+                continue
+            age = _iso_age_sec(sm.observed_at, now)
+            if age is not None and age > CFG.max_quote_age_sec:
+                continue
+            sibs.append(sm)
         ladder = fit_ladder(sibs, exclude_ticker=d.ticker)
         if not ladder:
             d.accepted = False
             d.reason = "ladder_unconfirmed"
             d.reason_tag = "ladder_kink"
             return d
+    try:
+        raw = fetch_ticker(d.ticker)
+    except Exception:
+        d.accepted = False
+        d.reason = "stale_quote"
+        return d
+    if not raw:
+        d.accepted = False
+        d.reason = "stale_quote"
+        return d
+    m = _link(raw, [game])
+    if not m:
+        d.accepted = False
+        d.reason = "stale_quote"
+        return d
+    if not getattr(m, "trading_active", True):
+        d.accepted = False
+        d.reason = "exchange_paused"
+        return d
     fresh = score(game, m, d.side, project_game(game), ladder)
+    fresh.candidate_id = cid
     if d.reason_tag == "ladder_kink" and fresh.reason_tag != "ladder_kink":
         fresh.accepted = False
         fresh.reason = "ladder_unconfirmed"
@@ -443,7 +457,6 @@ def confirm_paper(d, game: MlbGame, ladder_tickers: Optional[List[str]] = None):
     if fresh.accepted and fresh.ask_cents > d.ask_cents + 1:
         fresh.accepted = False
         fresh.reason = "stale_quote"
-        fresh.reason_tag = "stale_quote"
     return fresh
 
 

@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional
-from zoneinfo import ZoneInfo
+from uuid import uuid4
 
-from .config import CFG, OPEN_STATUSES
+from .config import CFG, ET, OPEN_STATUSES
 from .eligibility import eligibility
 from .fees import kalshi_taker_fee_cents, net_ev_cents
 from .ladder import fit_ladder
@@ -13,24 +13,25 @@ from .types import Decision, KalshiSnap, MlbGame, ModelEstimate
 
 def _ask(market: KalshiSnap, side: str):
     if side == "YES":
-        if market.yes_ask is not None and market.yes_bid is not None:
-            spread = market.yes_ask - market.yes_bid
-        else:
-            spread = 99
-        return market.yes_ask, spread, market.yes_ask_size
-    if market.no_ask is not None and market.no_bid is not None:
-        spread = market.no_ask - market.no_bid
+        ask = market.yes_ask
+        bid = market.yes_bid
+        size = market.yes_ask_size
     else:
-        spread = 99
-    return market.no_ask, spread, market.no_ask_size
+        ask = market.no_ask
+        bid = market.no_bid
+        size = market.no_ask_size
+    spread = (ask - bid) if ask is not None and bid is not None else 99.0
+    return ask, spread, size
 
 
 def _size(ask: float, ask_size: Optional[float]) -> int:
-    if ask_size is None or ask_size < CFG.min_ask_size:
+    bank = CFG.paper_bankroll * (CFG.risk_per_trade_pct / 100.0)
+    if ask <= 0:
         return 0
-    risk = CFG.paper_bankroll * (CFG.risk_per_trade_pct / 100.0)
-    n = int(risk / max(0.01, ask / 100.0))
-    n = max(1, min(n, CFG.max_contracts_per_trade, int(ask_size)))
+    n = int(bank / (ask / 100.0))
+    n = max(1, min(n, CFG.max_contracts_per_trade))
+    if ask_size is not None:
+        n = min(n, int(ask_size))
     return n
 
 
@@ -39,7 +40,7 @@ def _base(**kw) -> Decision:
         ticker="", game_id="", kind="", side="", line=None, ask_cents=0.0, spread_cents=99.0,
         model_prob=0.5, raw_ev=-999.0, fee=0.0, net_ev=-999.0, roi=-999.0, size=0,
         accepted=False, reason="missing_price", reason_tag="none", source="f1-poisson",
-        fee_total=0.0, quoted_at=None, observed_at=None, ask_size=None,
+        fee_total=0.0, quoted_at=None, observed_at=None, ask_size=None, candidate_id="",
     )
     defaults.update(kw)
     return Decision(**defaults)
@@ -92,11 +93,14 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
         d.reason = "missing_price"
         return d
     d.ask_cents = ask
+    d.candidate_id = uuid4().hex
+    th = thesis(game, market, side, ask, model, ladder)
+    d.model_prob, d.reason_tag, d.source = th["p"], th["tag"], th["source"]
     if spread < 0:
-        d.reason, d.reason_tag = "crossed_book", "crossed_book"
+        d.reason = "crossed_book"
         return d
     if market.yes_ask is not None and market.no_ask is not None and market.yes_ask + market.no_ask < 100:
-        d.reason, d.reason_tag = "crossed_book", "crossed_book"
+        d.reason = "crossed_book"
         return d
     if ask < CFG.min_price_cents or ask > CFG.max_price_cents:
         d.reason = "price_out_of_band"
@@ -105,15 +109,12 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
         d.reason = "spread_too_wide"
         return d
     if market.page_latency_sec and market.page_latency_sec > CFG.max_page_latency_sec:
-        d.reason, d.reason_tag = "stale_quote", "stale_quote"
+        d.reason = "stale_quote"
         return d
     obs_age = _iso_age_sec(market.observed_at, now)
     if obs_age is not None and obs_age > CFG.max_quote_age_sec:
-        d.reason, d.reason_tag = "stale_quote", "stale_quote"
+        d.reason = "stale_quote"
         return d
-    # quoted_at (Kalshi updated_time) is metadata — never use it for freshness.
-    th = thesis(game, market, side, ask, model, ladder)
-    d.model_prob, d.reason_tag, d.source = th["p"], th["tag"], th["source"]
     if th["reject"]:
         d.reason = th["reject"]
         return d
@@ -121,11 +122,11 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
         d.reason = "disagreement_too_small"
         return d
     if ask_size is None or ask_size < CFG.min_ask_size:
-        d.reason, d.reason_tag = "thin_book", "thin_book"
+        d.reason = "thin_book"
         return d
     size = _size(ask, ask_size)
     if size < 1:
-        d.reason, d.reason_tag = "thin_book", "thin_book"
+        d.reason = "thin_book"
         return d
     ev = net_ev_cents(th["p"], ask, size, CFG.fee_coefficient)
     fee_total = kalshi_taker_fee_cents(ask, size, CFG.fee_coefficient)
@@ -143,8 +144,7 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
 
 
 def _seed_caps(existing: Iterable) -> tuple:
-    et = ZoneInfo("America/New_York")
-    today = datetime.now(et).date().isoformat()
+    today = datetime.now(ET).date().isoformat()
     daily, per_game, seen = 0, {}, set()
     for t in existing or []:
         status = getattr(t, "status", None) or (t.get("status") if isinstance(t, dict) else None)
@@ -157,7 +157,7 @@ def _seed_caps(existing: Iterable) -> tuple:
             seen.add(ticker)
         opened = getattr(t, "opened_at", None) or (t.get("opened_at") if isinstance(t, dict) else "") or ""
         try:
-            opened_day = datetime.fromisoformat(opened.replace("Z", "+00:00")).astimezone(et).date().isoformat()
+            opened_day = datetime.fromisoformat(opened.replace("Z", "+00:00")).astimezone(ET).date().isoformat()
         except ValueError:
             opened_day = opened[:10]
         if opened_day == today:
