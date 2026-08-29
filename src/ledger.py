@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 from .config import CFG
 from .fees import kalshi_taker_fee_cents, realized_pnl_cents
@@ -71,11 +72,21 @@ def paper_fill(d: Decision, game: MlbGame, tickets: List[Ticket]) -> Optional[Ti
     tid = f"{d.ticker}:{d.side}:{d.game_id}"
     if any(t.id == tid for t in tickets):
         return None
-    today = datetime.now(timezone.utc).date().isoformat()
-    todays = [t for t in tickets if t.status != "void" and t.opened_at[:10] == today]
+    et = ZoneInfo("America/New_York")
+    today = datetime.now(et).date().isoformat()
+    todays = []
+    for t in tickets:
+        if t.status == "void":
+            continue
+        if t.game_id == d.game_id:
+            return None  # game cap is lifetime of the game, any date
+        try:
+            day = datetime.fromisoformat(t.opened_at.replace("Z", "+00:00")).astimezone(et).date().isoformat()
+        except ValueError:
+            day = t.opened_at[:10]
+        if day == today:
+            todays.append(t)
     if len(todays) >= CFG.max_daily_positions:
-        return None
-    if sum(1 for t in todays if t.game_id == d.game_id) >= CFG.max_positions_per_game:
         return None
     vs = f"{game.away_canon}@{game.home_canon}"
     if d.kind == "RFI":

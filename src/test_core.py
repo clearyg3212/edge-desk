@@ -244,6 +244,88 @@ def test_paper_config_locked():
     assert ev["net_ev_cents"] > 6
 
 
+def test_no_ask_size_from_yes_bid():
+    from .scan import book_sizes
+    y, n = book_sizes({"yes_ask_size_fp": 8, "yes_bid_size_fp": 11})
+    assert y == 8 and n == 11
+
+
+def test_no_side_not_thin_when_yes_bid_size_present():
+    from .scan import _link
+    raw = {
+        "ticker": "KXMLBRFI-26AUG292315BOSNYY",
+        "title": "RFI",
+        "yes_bid": 30,
+        "yes_ask": 32,
+        "yes_bid_size_fp": 14,
+        "yes_ask_size_fp": 9,
+        "status": "open",
+        "_received_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "_page_latency": 0.2,
+    }
+    m = _link(raw, [_game()])
+    assert m is not None
+    assert m.no_ask_size == 14
+    assert m.no_ask == 70
+    nos = [x for x in evaluate_slate([_game()], [m]) if x.side == "NO"][0]
+    assert nos.reason != "thin_book"
+
+
+def test_sixteen_hour_ceiling_in_eligibility():
+    late = (datetime.now(timezone.utc) + timedelta(hours=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    d = evaluate_slate([_game(commence_iso=late)], [_rfi(32)])
+    assert all(x.reason == "too_early" for x in d)
+
+
+def test_game_cap_survives_midnight():
+    yest = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    existing = [Ticket(
+        id="old", opened_at=yest, ticker="OLD", game_id="g1", label="x",
+        kind="RFI", side="YES", line=0.5, ask_cents=32, model_prob=0.41,
+        net_ev=8, size=5, reason_tag="ace_tax",
+    )]
+    d = evaluate_slate([_game()], [_rfi(32, ticker="KXMLBRFI-99AUG292315BOSNYYZ")], existing_tickets=existing)
+    yes = [x for x in d if x.side == "YES"][0]
+    assert not yes.accepted
+    assert yes.reason == "game_limit"
+
+
+def test_dead_kalshi_is_invalid_not_quiet():
+    from .scan import FeedResult, combine_kalshi
+    r = combine_kalshi(
+        FeedResult("KXMLBRFI", [], False, "timeout", 1.0, "t"),
+        FeedResult("KXMLBTOTAL", [], True, None, 0.2, "t"),
+        [],
+        None,
+    )
+    assert r["kalshi_ok"] is False
+    assert r["markets"] == []
+    assert r["decisions"] == []
+    assert any("FAILED" in w for w in r["warnings"])
+
+
+def test_future_quote_rejected():
+    fut = (datetime.now(timezone.utc) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    yes = [x for x in evaluate_slate([_game()], [_rfi(32, quoted_at=fut)]) if x.side == "YES"][0]
+    assert not yes.accepted
+    assert yes.reason == "stale_quote"
+
+
+def test_slow_page_rejected():
+    m = _rfi(32)
+    m.page_latency_sec = 9.0
+    yes = [x for x in evaluate_slate([_game()], [m]) if x.side == "YES"][0]
+    assert not yes.accepted
+    assert yes.reason == "stale_quote"
+
+
+def test_updated_time_iso_does_not_crash():
+    from .scan import _parse_updated
+    assert _parse_updated({"updated_time": "2026-08-29T21:00:00Z"})
+    assert _parse_updated({"updated_time": "nope"}) is None
+    assert _parse_updated({"updated_ts": object()}) is None
+
+
 def run() -> None:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0

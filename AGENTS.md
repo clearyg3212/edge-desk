@@ -36,7 +36,13 @@ Windows: `run.bat`. Tests must stay green (22+).
 - Spread is a liquidity filter, not an EV haircut.
 - Accept only if **net EV ≥ 6¢** after fee **and** ROI ≥ 10% **and** model–ask gap ≥ 7¢.
 - Price band 28–72¢, spread ≤ 5¢.
-- Daily/game caps are **persistent** across process runs (seeded from the blotter).
+- **NO depth** = `yes_bid_size_fp` (buying NO lifts the YES bid). Never `no_ask_size_fp` alone.
+- Kalshi scan is **invalid** unless both series fetches succeed. Failed feed ≠ quiet night. No tickets.
+- Freshness = page receipt time + page latency, not a fictional `price_updated_ts`. Missing quote ts is allowed if the page is fresh; future ts and slow pages are not.
+- Paper fill: wait `exec_latency_sec`, refetch ticker, fill only at the new ask/depth.
+- 25m–16h is in **eligibility**, every thesis.
+- Game cap is for the life of `game_id`, not the UTC day.
+- `DataLock` around load → scan → settle → fill → save.
 - Ladder fit **excludes the market being scored** and needs ≥3 other strikes.
 - Empty nights are correct. Do not loosen gates so it “looks alive.”
 

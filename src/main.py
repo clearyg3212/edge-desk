@@ -13,8 +13,9 @@ from .config import CFG
 from .eligibility import REASON_LABEL
 from .engine import evaluate_slate
 from .ledger import load_tickets, paper_fill, save_tickets, settle
+from .lock import DataLock
 from .quotes import append_quotes, label_finals
-from .scan import run_scan
+from .scan import confirm_paper, run_scan
 from .types import Decision, KalshiSnap, MlbGame, Pitcher, Weather
 
 
@@ -110,35 +111,43 @@ def _log_decisions(decisions: list[Decision]) -> None:
 
 def _one_scan(no_paper: bool) -> int:
     print("\nscanning MLB + Kalshi …")
-    tickets = load_tickets()
-    scan = run_scan(existing_tickets=tickets)
-    for w in scan["warnings"]:
-        print("warn:", w)
-    decisions, games = scan["decisions"], scan["games"]
-    _print_board(decisions, games)
-    _log_decisions(decisions)
-    nq = append_quotes(decisions, games)
-    nl = label_finals(games)
+    with DataLock(CFG.data_dir / "bot.lock"):
+        tickets = load_tickets()
+        scan = run_scan(existing_tickets=tickets)
+        for w in scan["warnings"]:
+            print("warn:", w)
+        if not scan.get("kalshi_ok"):
+            print("KALSHI FEED INVALID — not a quiet night. no tickets.")
+        decisions, games = scan["decisions"], scan["games"]
+        _print_board(decisions, games)
+        _log_decisions(decisions)
+        nq = append_quotes(decisions, games)
+        nl = label_finals(games)
 
-    settle(tickets, games)
-    if not no_paper:
-        by = {g.game_id: g for g in games}
-        filled = 0
-        for d in decisions:
-            g = by.get(d.game_id)
-            if g and paper_fill(d, g, tickets):
-                filled += 1
-        print(f"\npapered {filled} new ticket(s)")
-    save_tickets(tickets)
-    settled = [t for t in tickets if t.status == "settled"]
-    pnl = sum(t.pnl_cents or 0 for t in settled)
-    print(f"blotter  open={sum(1 for t in tickets if t.status=='open')}  "
-          f"settled={len(settled)}  P&L={pnl/100:.2f} USD")
-    print(f"quotes +{nq}  labels +{nl}")
-    print(f"log    → {CFG.data_dir / 'quotes.jsonl'}")
-    print(f"labels → {CFG.data_dir / 'outcomes.jsonl'}")
-    print(f"book   → {CFG.data_dir / 'tickets.jsonl'}")
-    print("report → python -m src.report")
+        settle(tickets, games)
+        if not no_paper and scan.get("kalshi_ok"):
+            by = {g.game_id: g for g in games}
+            filled = 0
+            for d in decisions:
+                g = by.get(d.game_id)
+                if not g or not d.accepted:
+                    continue
+                d2 = confirm_paper(d, g)
+                if g and paper_fill(d2, g, tickets):
+                    filled += 1
+            print(f"\npapered {filled} new ticket(s)")
+        elif not scan.get("kalshi_ok"):
+            print("\npapered 0 (feed invalid)")
+        save_tickets(tickets)
+        settled = [t for t in tickets if t.status == "settled"]
+        pnl = sum(t.pnl_cents or 0 for t in settled)
+        print(f"blotter  open={sum(1 for t in tickets if t.status=='open')}  "
+              f"settled={len(settled)}  P&L={pnl/100:.2f} USD")
+        print(f"quotes +{nq}  labels +{nl}")
+        print(f"log    → {CFG.data_dir / 'quotes.jsonl'}")
+        print(f"labels → {CFG.data_dir / 'outcomes.jsonl'}")
+        print(f"book   → {CFG.data_dir / 'tickets.jsonl'}")
+        print("report → python -m src.report")
     return 0
 
 

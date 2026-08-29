@@ -31,6 +31,8 @@ class BotConfig:
     match_window_hours: float = 6.0
     ladder_min_points: int = 3
     max_quote_age_sec: float = 180.0
+    max_page_latency_sec: float = 5.0
+    exec_latency_sec: float = 1.0
     log_dir: Path = ROOT / "logs"
     data_dir: Path = ROOT / "data"
 

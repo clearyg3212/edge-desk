@@ -40,8 +40,6 @@ def thesis(
             return {"p": p, "tag": "ladder_kink", "source": "kalshi-ladder", "reject": None}
 
     if market.kind == "RFI":
-        if mins > 36 * 60:
-            return {"p": 0.5, "tag": "too_early", "source": "f1-poisson", "reject": "too_early"}
         if _thin(game):
             return {"p": 0.5, "tag": "thin_sample", "source": "f1-poisson", "reject": "thin_sample"}
         if _both_aces(game) and side == "YES" and ask <= 36:

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional
+from zoneinfo import ZoneInfo
 
 from .config import CFG, OPEN_STATUSES
 from .eligibility import eligibility
@@ -44,11 +45,11 @@ def _base(**kw) -> Decision:
     return Decision(**defaults)
 
 
-def _quote_age_sec(market: KalshiSnap, now: datetime) -> Optional[float]:
-    if not market.quoted_at:
+def _iso_age_sec(iso: Optional[str], now: datetime) -> Optional[float]:
+    if not iso:
         return None
     try:
-        ts = datetime.fromisoformat(market.quoted_at.replace("Z", "+00:00"))
+        ts = datetime.fromisoformat(iso.replace("Z", "+00:00"))
     except ValueError:
         return None
     return (now - ts).total_seconds()
@@ -88,8 +89,15 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
     if spread > CFG.max_spread_cents:
         d.reason = "spread_too_wide"
         return d
-    age = _quote_age_sec(market, now)
-    if age is not None and age > CFG.max_quote_age_sec:
+    if market.page_latency_sec and market.page_latency_sec > CFG.max_page_latency_sec:
+        d.reason, d.reason_tag = "stale_quote", "stale_quote"
+        return d
+    obs_age = _iso_age_sec(market.observed_at, now)
+    if obs_age is not None and obs_age > CFG.max_quote_age_sec:
+        d.reason, d.reason_tag = "stale_quote", "stale_quote"
+        return d
+    q_age = _iso_age_sec(market.quoted_at, now)
+    if q_age is not None and (q_age > CFG.max_quote_age_sec or q_age < -5):
         d.reason, d.reason_tag = "stale_quote", "stale_quote"
         return d
     th = thesis(game, market, side, ask, model, ladder)
@@ -123,21 +131,25 @@ def score(game: MlbGame, market: KalshiSnap, side: str, model: ModelEstimate, la
 
 
 def _seed_caps(existing: Iterable) -> tuple:
-    today = datetime.now(timezone.utc).date().isoformat()
+    et = ZoneInfo("America/New_York")
+    today = datetime.now(et).date().isoformat()
     daily, per_game, seen = 0, {}, set()
     for t in existing or []:
         status = getattr(t, "status", None) or (t.get("status") if isinstance(t, dict) else None)
         if status == "void":
             continue
-        opened = getattr(t, "opened_at", None) or (t.get("opened_at") if isinstance(t, dict) else "") or ""
-        if opened[:10] != today:
-            continue
-        daily += 1
         gid = getattr(t, "game_id", None) or (t.get("game_id") if isinstance(t, dict) else "")
         ticker = getattr(t, "ticker", None) or (t.get("ticker") if isinstance(t, dict) else "")
         per_game[gid] = per_game.get(gid, 0) + 1
         if ticker:
             seen.add(ticker)
+        opened = getattr(t, "opened_at", None) or (t.get("opened_at") if isinstance(t, dict) else "") or ""
+        try:
+            opened_day = datetime.fromisoformat(opened.replace("Z", "+00:00")).astimezone(et).date().isoformat()
+        except ValueError:
+            opened_day = opened[:10]
+        if opened_day == today:
+            daily += 1
     return daily, per_game, seen
 
 

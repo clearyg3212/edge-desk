@@ -2,8 +2,9 @@ import json
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from .config import CFG
@@ -162,8 +163,65 @@ def fetch_mlb() -> List[MlbGame]:
     return games
 
 
-def fetch_series(series: str) -> List[dict]:
+def _fp(val) -> Optional[float]:
+    if val is None:
+        return None
+    try:
+        x = float(val)
+    except (TypeError, ValueError):
+        return None
+    return x if x >= 0 else None
+
+
+def book_sizes(raw: dict) -> Tuple[Optional[float], Optional[float]]:
+    """YES ask size; NO ask size = YES bid size (Kalshi complement)."""
+    yes_ask = _fp(raw.get("yes_ask_size_fp"))
+    yes_bid = _fp(raw.get("yes_bid_size_fp"))
+    no_ask = _fp(raw.get("no_ask_size_fp"))
+    if no_ask is None:
+        no_ask = yes_bid
+    return yes_ask, no_ask
+
+
+def _stamp_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_updated(raw: dict) -> Optional[str]:
+    val = raw.get("updated_time") or raw.get("price_updated_ts") or raw.get("updated_ts")
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        ts = float(val)
+        if ts > 1e12:
+            ts /= 1000.0
+        try:
+            return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (OSError, ValueError, OverflowError):
+            return None
+    if isinstance(val, str):
+        try:
+            datetime.fromisoformat(val.replace("Z", "+00:00"))
+            return val
+        except ValueError:
+            return None
+    return None
+
+
+@dataclass
+class FeedResult:
+    series: str
+    raw: List[dict]
+    ok: bool
+    error: Optional[str]
+    latency_sec: float
+    received_at: str
+
+
+def fetch_series(series: str) -> FeedResult:
     out, cursor = [], None
+    total_lat = 0.0
+    received = _stamp_iso()
     for _ in range(4):
         u = (
             "https://api.elections.kalshi.com/trade-api/v2/markets"
@@ -172,25 +230,52 @@ def fetch_series(series: str) -> List[dict]:
         if cursor:
             u += f"&cursor={cursor}"
         data = None
+        err = None
+        t0 = time.time()
         for attempt in range(3):
             try:
                 data = _get(u)
+                err = None
                 break
             except urllib.error.HTTPError as e:
+                err = f"HTTP {e.code}"
                 if e.code == 429:
                     time.sleep(1.2 * (attempt + 1))
                     continue
-                raise
-            except Exception:
+                return FeedResult(series, [], False, err, time.time() - t0, _stamp_iso())
+            except Exception as e:
+                err = str(e) or type(e).__name__
                 time.sleep(0.4)
+        lat = time.time() - t0
+        total_lat += lat
         if not data:
-            break
-        out.extend(data.get("markets") or [])
+            return FeedResult(series, [], False, err or "empty response", total_lat, _stamp_iso())
+        rec = _stamp_iso()
+        received = rec
+        for m in data.get("markets") or []:
+            row = dict(m)
+            row["_received_at"] = rec
+            row["_page_latency"] = lat
+            out.append(row)
         cursor = data.get("cursor") or None
         if not cursor:
             break
         time.sleep(0.25)
-    return out
+    return FeedResult(series, out, True, None, total_lat, received)
+
+
+def fetch_ticker(ticker: str) -> Optional[dict]:
+    u = f"https://api.elections.kalshi.com/trade-api/v2/markets/{ticker}"
+    t0 = time.time()
+    data = _get(u, timeout=10)
+    rec = _stamp_iso()
+    m = data.get("market") or data
+    if not isinstance(m, dict) or not m.get("ticker"):
+        return None
+    row = dict(m)
+    row["_received_at"] = rec
+    row["_page_latency"] = time.time() - t0
+    return row
 
 
 def _link(raw: dict, games: List[MlbGame]) -> Optional[KalshiSnap]:
@@ -220,24 +305,26 @@ def _link(raw: dict, games: List[MlbGame]) -> Optional[KalshiSnap]:
                     game_id = best.game_id
             elif best_dt < CFG.match_window_hours * 3600:
                 game_id = best.game_id
-    observed = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    quoted = None
-    for key in ("price_updated_ts", "last_price_updated_ts", "updated_ts"):
-        raw_ts = raw.get(key)
-        if raw_ts is None:
-            continue
-        try:
-            ts = float(raw_ts)
-            if ts > 1e12:
-                ts /= 1000.0
-            quoted = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            break
-        except (TypeError, ValueError, OSError):
-            continue
+    yes_bid = _to_cents(raw.get("yes_bid_dollars"), raw.get("yes_bid"))
+    yes_ask = _to_cents(raw.get("yes_ask_dollars"), raw.get("yes_ask"))
+    no_bid = _to_cents(raw.get("no_bid_dollars"), raw.get("no_bid"))
+    no_ask = _to_cents(raw.get("no_ask_dollars"), raw.get("no_ask"))
+    if no_ask is None and yes_bid is not None:
+        no_ask = round(100.0 - yes_bid, 2)
+    if no_bid is None and yes_ask is not None:
+        no_bid = round(100.0 - yes_ask, 2)
+    yes_ask_size, no_ask_size = book_sizes(raw)
+    observed = str(raw.get("_received_at") or _stamp_iso())
+    quoted = _parse_updated(raw)
     close_time = None
     close_raw = raw.get("close_time") or raw.get("expiration_time")
     if isinstance(close_raw, str):
         close_time = close_raw
+    lat = raw.get("_page_latency") or 0.0
+    try:
+        lat = float(lat)
+    except (TypeError, ValueError):
+        lat = 0.0
     return KalshiSnap(
         ticker=ticker,
         title=str(raw.get("title") or raw.get("yes_sub_title") or ticker),
@@ -245,43 +332,98 @@ def _link(raw: dict, games: List[MlbGame]) -> Optional[KalshiSnap]:
         series=parsed.series,
         kind=parsed.kind,
         line=parsed.line,
-        yes_bid=_to_cents(raw.get("yes_bid_dollars"), raw.get("yes_bid")),
-        yes_ask=_to_cents(raw.get("yes_ask_dollars"), raw.get("yes_ask")),
-        no_bid=_to_cents(raw.get("no_bid_dollars"), raw.get("no_bid")),
-        no_ask=_to_cents(raw.get("no_ask_dollars"), raw.get("no_ask")),
-        yes_ask_size=float(raw["yes_ask_size_fp"]) if raw.get("yes_ask_size_fp") is not None else None,
-        no_ask_size=float(raw["no_ask_size_fp"]) if raw.get("no_ask_size_fp") is not None else None,
+        yes_bid=yes_bid,
+        yes_ask=yes_ask,
+        no_bid=no_bid,
+        no_ask=no_ask,
+        yes_ask_size=yes_ask_size,
+        no_ask_size=no_ask_size,
         status=str(raw.get("status") or ""),
         game_id=game_id,
         quoted_at=quoted,
         observed_at=observed,
         close_time=close_time,
+        page_latency_sec=lat,
     )
+
+
+def combine_kalshi(rfi: FeedResult, tot: FeedResult, games: List[MlbGame], existing_tickets=None) -> dict:
+    warnings = []
+    ok = rfi.ok and tot.ok
+    if not rfi.ok:
+        warnings.append(f"Kalshi {rfi.series} FAILED: {rfi.error}")
+    if not tot.ok:
+        warnings.append(f"Kalshi {tot.series} FAILED: {tot.error}")
+    if ok and not rfi.raw and not tot.raw:
+        warnings.append("Kalshi valid-empty: 0 open markets")
+    if not ok:
+        return {
+            "markets": [],
+            "decisions": [],
+            "kalshi_ok": False,
+            "warnings": warnings,
+        }
+    markets = [m for m in (_link(r, games) for r in (rfi.raw + tot.raw)) if m]
+    decisions = evaluate_slate(games, markets, existing_tickets=existing_tickets)
+    return {
+        "markets": markets,
+        "decisions": decisions,
+        "kalshi_ok": True,
+        "warnings": warnings,
+    }
+
+
+def confirm_paper(d, game: MlbGame):
+    """Wait, refetch ticker, fill only at the new executable ask/depth."""
+    from .engine import score
+    from .model import project_game
+
+    if CFG.exec_latency_sec > 0:
+        time.sleep(CFG.exec_latency_sec)
+    try:
+        raw = fetch_ticker(d.ticker)
+    except Exception:
+        d.accepted = False
+        d.reason = "stale_quote"
+        d.reason_tag = "stale_quote"
+        return d
+    if not raw:
+        d.accepted = False
+        d.reason = "stale_quote"
+        d.reason_tag = "stale_quote"
+        return d
+    m = _link(raw, [game])
+    if not m:
+        d.accepted = False
+        d.reason = "stale_quote"
+        return d
+    fresh = score(game, m, d.side, project_game(game), None)
+    if fresh.accepted and fresh.ask_cents > d.ask_cents + 1:
+        fresh.accepted = False
+        fresh.reason = "stale_quote"
+        fresh.reason_tag = "stale_quote"
+    return fresh
 
 
 def run_scan(existing_tickets=None) -> dict:
     warnings = []
     games: List[MlbGame] = []
-    mlb_ok = kalshi_ok = False
+    mlb_ok = False
     try:
         games = fetch_mlb()
         mlb_ok = True
     except Exception as e:
         warnings.append(f"MLB feed failed: {e}")
-    markets: List[KalshiSnap] = []
-    try:
-        raw = fetch_series("KXMLBRFI") + fetch_series("KXMLBTOTAL")
-        markets = [m for m in (_link(r, games) for r in raw) if m]
-        kalshi_ok = True
-    except Exception as e:
-        warnings.append(f"Kalshi feed failed: {e}")
-    decisions = evaluate_slate(games, markets, existing_tickets=existing_tickets)
+    rfi = fetch_series("KXMLBRFI")
+    tot = fetch_series("KXMLBTOTAL")
+    packed = combine_kalshi(rfi, tot, games, existing_tickets)
+    warnings.extend(packed["warnings"])
     return {
         "scanned_at": time.time(),
         "games": games,
-        "markets": markets,
-        "decisions": decisions,
+        "markets": packed["markets"],
+        "decisions": packed["decisions"],
         "mlb_ok": mlb_ok,
-        "kalshi_ok": kalshi_ok,
+        "kalshi_ok": packed["kalshi_ok"],
         "warnings": warnings,
     }

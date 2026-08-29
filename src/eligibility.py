@@ -22,6 +22,8 @@ def eligibility(game: MlbGame, market: KalshiSnap, side: str) -> Optional[str]:
         return "in_progress"
     if minutes_to_pitch(game) < CFG.min_minutes_to_pitch:
         return "too_close_to_pitch"
+    if minutes_to_pitch(game) > CFG.max_hours_to_pitch * 60:
+        return "too_early"
     if not game.away_pitcher.id or not game.home_pitcher.id:
         return "starter_unconfirmed"
     if market.kind == "TOTAL":
