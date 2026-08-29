@@ -149,19 +149,25 @@ def _one_scan(no_paper: bool) -> int:
             for m in markets:
                 if m.kind == "TOTAL" and m.game_id:
                     sibs.setdefault(m.game_id, []).append(m.ticker)
+            pending = []
             for d in decisions:
                 g = by.get(d.game_id)
                 if not g or not d.accepted:
                     continue
                 d2 = confirm_paper(d, g, sibs.get(d.game_id) or [])
                 got = paper_fill(d2, g, tickets)
-                append_execution(d, d2, g, bool(got))
+                pending.append((d, d2, g, bool(got)))
                 if got:
                     filled += 1
+            save_tickets(tickets)
+            for d, d2, g, got in pending:
+                append_execution(d, d2, g, got)
             print(f"\npapered {filled} new ticket(s)")
         elif not scan.get("kalshi_ok"):
             print("\npapered 0 (feed invalid)")
-        save_tickets(tickets)
+            save_tickets(tickets)
+        else:
+            save_tickets(tickets)
         settled = [t for t in tickets if t.status == "settled"]
         pnl = sum(t.pnl_cents or 0 for t in settled)
         print(f"blotter  open={sum(1 for t in tickets if t.status=='open')}  "

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from .config import CFG, OPEN_STATUSES
@@ -33,6 +34,19 @@ def _usable(m: KalshiSnap) -> bool:
         return False
     mid = _mid_yes(m)
     if mid is None or mid <= 8 or mid >= 92:
+        return False
+    if m.page_latency_sec and m.page_latency_sec > CFG.max_page_latency_sec:
+        return False
+    if not m.observed_at:
+        return False
+    try:
+        ts = datetime.fromisoformat(m.observed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - ts.astimezone(timezone.utc)).total_seconds()
+    if age > CFG.max_quote_age_sec or age < -5:
         return False
     return True
 

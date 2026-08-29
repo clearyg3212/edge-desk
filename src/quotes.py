@@ -202,19 +202,22 @@ def append_execution(original: Decision, confirmed: Decision, game: MlbGame, fil
         home_ip=game.home_pitcher.ip,
         temp_f=game.weather.temp_f,
         wind_mph=game.weather.wind_mph,
-        ask=confirmed.ask_cents,
+        ask=original.ask_cents,
         spread=confirmed.spread_cents,
-        ask_size=confirmed.ask_size,
-        model_p=confirmed.model_prob,
+        ask_size=confirmed.ask_size if getattr(confirmed, "confirmed_quote", False) else None,
+        model_p=original.model_prob,
         tag=confirmed.reason_tag,
         reason=confirmed.reason,
         accepted=confirmed.accepted,
-        event="execution_attempt",
+        event="execution_attempt" if getattr(confirmed, "confirmed_quote", False) else "confirmation_failed",
         candidate_id=cid,
         orig_ask=original.ask_cents,
-        confirmed_ask=confirmed.ask_cents,
-        filled=filled,
-        slippage_cents=round(confirmed.ask_cents - original.ask_cents, 3),
+        confirmed_ask=(confirmed.ask_cents if getattr(confirmed, "confirmed_quote", False) else None),
+        filled=bool(filled and getattr(confirmed, "confirmed_quote", False)),
+        slippage_cents=(
+            round(confirmed.ask_cents - original.ask_cents, 3)
+            if getattr(confirmed, "confirmed_quote", False) else None
+        ),
     )
     with _quotes_path().open("a", encoding="utf-8") as f:
         f.write(json.dumps(asdict(row)) + "\n")

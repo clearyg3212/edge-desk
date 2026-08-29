@@ -7,7 +7,7 @@ from .config import CFG
 from .fees import kalshi_taker_fee_cents, net_ev_cents, realized_pnl_cents
 from .matching import parse_kalshi_ticker, same_matchup
 from .engine import evaluate_slate
-from .ledger import Ticket, save_tickets, load_tickets, settle
+from .ledger import Ticket, save_tickets, load_tickets, settle, paper_fill
 from .types import KalshiSnap, MlbGame, Pitcher, Weather
 
 
@@ -140,6 +140,8 @@ def test_ace_tax_sits_when_kalshi_is_fair():
     yes = [x for x in evaluate_slate([_game()], [_rfi(50)]) if x.side == "YES"][0]
     assert not yes.accepted
     assert yes.reason in {"no_structural_edge", "disagreement_too_small", "edge_too_small"}
+    assert yes.reason_tag == "ace_tax"
+    assert abs(yes.model_prob - 0.5) > 0.01
 
 
 def test_ace_tax_uses_mlb_prior_not_magic_41():
@@ -499,6 +501,7 @@ def test_quote_and_execution_share_id():
             yes = [x for x in ds if x.side == "YES"][0]
             assert yes.candidate_id
             append_quotes(ds, [g])
+            yes.confirmed_quote = True
             append_execution(yes, yes, g, True)
             rows = load_quotes()
             obs = [r for r in rows if r.get("event") == "candidate_observed" and r.get("side") == "YES"][0]
@@ -506,6 +509,80 @@ def test_quote_and_execution_share_id():
             assert obs["candidate_id"] == exe["candidate_id"] == yes.candidate_id
         finally:
             object.__setattr__(cfg_mod.CFG, "data_dir", old_dir)
+
+
+def test_forecast_p_independent_of_ask():
+    cheap = [x for x in evaluate_slate([_game()], [_rfi(32)]) if x.side == "YES"][0]
+    fair = [x for x in evaluate_slate([_game()], [_rfi(50)]) if x.side == "YES"][0]
+    assert cheap.reason_tag == "ace_tax"
+    assert fair.reason_tag == "ace_tax"
+    assert abs(cheap.model_prob - fair.model_prob) < 1e-9
+    assert cheap.accepted and not fair.accepted
+
+
+def test_duplicate_malformed_does_not_clobber():
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    good = _rfi(32)
+    bad = _rfi(32)
+    bad.yes_ask = None
+    good.observed_at = bad.observed_at = now
+    for order in ([bad, good], [good, bad]):
+        yes = [x for x in evaluate_slate([_game()], order) if x.side == "YES"]
+        assert any(x.accepted for x in yes), order
+
+
+def test_ladder_rejects_stale_strikes():
+    from .ladder import fit_ladder
+    old = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = []
+    for i, line in enumerate((7.5, 8.5, 9.5)):
+        m = _rfi(48 - i * 4)
+        m.kind = "TOTAL"
+        m.line = line
+        m.yes_bid, m.yes_ask = 44 - i, 50 - i
+        m.observed_at = old
+        m.page_latency_sec = 99
+        rows.append(m)
+    assert fit_ladder(rows) is None
+
+
+def test_confirmation_failed_does_not_invent_price():
+    from .quotes import append_execution, load_quotes
+    from . import config as cfg_mod
+    import tempfile
+    old_dir = Path(cfg_mod.CFG.data_dir)
+    with tempfile.TemporaryDirectory() as td:
+        object.__setattr__(cfg_mod.CFG, "data_dir", Path(td))
+        try:
+            g = _game()
+            yes = [x for x in evaluate_slate([g], [_rfi(32)]) if x.side == "YES"][0]
+            fail = yes
+            fail.confirmed_quote = False
+            fail.reason = "stale_quote"
+            append_execution(yes, fail, g, True)
+            row = [r for r in load_quotes() if r.get("event") == "confirmation_failed"][0]
+            assert row["confirmed_ask"] is None
+            assert row["slippage_cents"] is None
+            assert row["filled"] is False
+            assert row["candidate_id"] == yes.candidate_id
+        finally:
+            object.__setattr__(cfg_mod.CFG, "data_dir", old_dir)
+
+
+def test_ticket_stores_candidate_id():
+    yes = [x for x in evaluate_slate([_game()], [_rfi(32)]) if x.side == "YES"][0]
+    t = paper_fill(yes, _game(), [])
+    assert t is not None
+    assert t.candidate_id == yes.candidate_id
+
+
+def test_eastern_dst_offsets():
+    from .config import Eastern
+    et = Eastern()
+    jan = datetime(2026, 1, 15, 12, 0, tzinfo=et)
+    jul = datetime(2026, 7, 15, 12, 0, tzinfo=et)
+    assert jan.utcoffset() == timedelta(hours=-5)
+    assert jul.utcoffset() == timedelta(hours=-4)
 
 
 def test_ny_tz_import_does_not_crash():

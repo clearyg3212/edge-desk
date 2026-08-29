@@ -1,8 +1,36 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _nth_sunday(year: int, month: int, n: int) -> datetime:
+    d = datetime(year, month, 1)
+    first_sun = 1 + (6 - d.weekday()) % 7
+    return datetime(year, month, first_sun + 7 * (n - 1))
+
+
+class Eastern(tzinfo):
+    """US Eastern with DST if zoneinfo/tzdata is missing."""
+
+    def utcoffset(self, dt):
+        return timedelta(hours=-4 if self._is_dst(dt) else -5)
+
+    def dst(self, dt):
+        return timedelta(hours=1) if self._is_dst(dt) else timedelta(0)
+
+    def tzname(self, dt):
+        return "EDT" if self._is_dst(dt) else "EST"
+
+    def _is_dst(self, dt) -> bool:
+        if dt is None:
+            return False
+        naive = dt.replace(tzinfo=None)
+        start = _nth_sunday(naive.year, 3, 2).replace(hour=2)
+        end = _nth_sunday(naive.year, 11, 1).replace(hour=2)
+        return start <= naive < end
+
 
 try:
     from zoneinfo import ZoneInfo
@@ -10,14 +38,13 @@ try:
     try:
         ET = ZoneInfo("America/New_York")
     except Exception:
-        ET = timezone(timedelta(hours=-4))
+        ET = Eastern()
 except Exception:
-    ET = timezone(timedelta(hours=-4))
+    ET = Eastern()
 
 
 def now_et() -> datetime:
     return datetime.now(ET)
-
 
 @dataclass(frozen=True)
 class BotConfig:

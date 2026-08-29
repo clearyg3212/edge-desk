@@ -40,7 +40,7 @@ def _base(**kw) -> Decision:
         ticker="", game_id="", kind="", side="", line=None, ask_cents=0.0, spread_cents=99.0,
         model_prob=0.5, raw_ev=-999.0, fee=0.0, net_ev=-999.0, roi=-999.0, size=0,
         accepted=False, reason="missing_price", reason_tag="none", source="f1-poisson",
-        fee_total=0.0, quoted_at=None, observed_at=None, ask_size=None, candidate_id=uuid4().hex,
+        fee_total=0.0, quoted_at=None, observed_at=None, ask_size=None, candidate_id=uuid4().hex, confirmed_quote=False,
     )
     defaults.update(kw)
     return Decision(**defaults)
@@ -171,11 +171,23 @@ def evaluate_slate(
     existing_tickets: Optional[List] = None,
 ) -> List[Decision]:
     CFG.assert_paper_safe()
+    def _ok(m):
+        return m.yes_ask is not None and (m.status or "").lower() in OPEN_STATUSES
+
     uniq = {}
     for m in markets:
         prev = uniq.get(m.ticker)
-        if prev is None or (m.observed_at or "") >= (prev.observed_at or ""):
+        if prev is None:
             uniq[m.ticker] = m
+            continue
+        ts_m, ts_p = m.observed_at or "", prev.observed_at or ""
+        ok_m, ok_p = _ok(m), _ok(prev)
+        if ts_m > ts_p:
+            uniq[m.ticker] = m if ok_m or not ok_p else prev
+        elif ts_m < ts_p:
+            uniq[m.ticker] = prev if ok_p or not ok_m else m
+        else:
+            uniq[m.ticker] = prev if ok_p else (m if ok_m else prev)
     markets = list(uniq.values())
     by_id = {g.game_id: g for g in games}
     models = {g.game_id: project_game(g) for g in games}

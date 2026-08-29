@@ -33,6 +33,7 @@ class Ticket:
     fee_cents: float = 0.0
     quoted_at: Optional[str] = None
     observed_at: Optional[str] = None
+    candidate_id: str = ""
 
 
 def _path() -> Path:
@@ -111,6 +112,7 @@ def paper_fill(d: Decision, game: MlbGame, tickets: List[Ticket]) -> Optional[Ti
         fee_cents=fee,
         quoted_at=d.quoted_at,
         observed_at=d.observed_at,
+        candidate_id=d.candidate_id,
     )
     tickets.append(t)
     return t

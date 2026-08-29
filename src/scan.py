@@ -449,6 +449,7 @@ def confirm_paper(d, game: MlbGame, ladder_tickers: Optional[List[str]] = None):
         return d
     fresh = score(game, m, d.side, project_game(game), ladder)
     fresh.candidate_id = cid
+    fresh.confirmed_quote = True
     if d.reason_tag == "ladder_kink" and fresh.reason_tag != "ladder_kink":
         fresh.accepted = False
         fresh.reason = "ladder_unconfirmed"
